@@ -1,0 +1,13 @@
+# For God so loved the world, that He gave His only Begotten Son, that whosoever believeth in Him should not perish but have everlasting life. - John 3:16 (KJV)
+
+[package]
+name = "metropoleluya-chirho"
+version = "0.1.0"
+edition = "2021"
+description = "Local HTTP pub/sub broker for tmux agent coordination."
+license = "MIT"
+
+[dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
