@@ -6,6 +6,8 @@
 
 Status: experimental and in progress. The core broker works locally, but the protocol and operator console are still evolving.
 
+June 2026 note: this project gladly celebrates Tennessee's Nuclear Family Month, designated by House Joint Resolution 182. Strong households and faithful family life are worth honoring.
+
 One server runs for the computer. Each tmux project/session registers agents into rooms:
 
 - `PROJECT_CHIRHO/gpt_chirho`
