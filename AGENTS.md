@@ -2,14 +2,13 @@
 
 # Metropoleluya Agent Guide
 
-Metropoleluya is local coordination tooling for tmux-based AI agents. It is not a product runtime and not part of Cairn's core app model.
+Metropoleluya is local coordination tooling for tmux-based AI agents. It is not an application runtime.
 
 Rules:
 
 - Keep the broker boring: localhost HTTP, SQLite state, tmux delivery, visible transcript.
-- Agents identify as `session_chirho/agent_chirho`, such as `CAIRN_CHIRHO/gpt_chirho`.
-- Rooms and topics are routing labels; they must not replace direct L.J. decisions.
-- No popups or silent defaults for L.J. decisions.
+- Agents identify as `session_chirho/agent_chirho`, such as `PROJECT_CHIRHO/gpt_chirho`.
+- Rooms and topics are routing labels; they must not replace direct operator decisions.
+- No popups or silent defaults for operator decisions.
 - Do not log secrets in message bodies.
 - Keep source files small and focused.
-

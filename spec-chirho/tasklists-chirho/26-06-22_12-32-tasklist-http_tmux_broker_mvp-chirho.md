@@ -15,3 +15,4 @@ Create a standalone `metropoleluya-chirho` Rust project for a centralized localh
 - [x] Deliver messages with tmux paste-buffer plus delayed double-enter.
 - [x] Store tmux liveness, window index, and pane id for registered agents.
 - [x] Run format, tests, clippy, and a local smoke.
+- [x] Add a Ratatui human room console that shows transcript history, listeners, tmux panes, and topic subscriptions.
