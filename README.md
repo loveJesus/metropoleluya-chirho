@@ -4,6 +4,8 @@
 
 `metropoleluya-chirho` is a single-machine HTTP broker for tmux agent coordination.
 
+Status: experimental and in progress. The core broker works locally, but the protocol and operator console are still evolving.
+
 One server runs for the computer. Each tmux project/session registers agents into rooms:
 
 - `PROJECT_CHIRHO/gpt_chirho`
