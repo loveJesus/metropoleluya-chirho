@@ -101,6 +101,16 @@ fn validate_token_chirho(name_chirho: &str, value_chirho: &str) -> Result<(), St
     Ok(())
 }
 
+fn validate_body_chirho(body_chirho: &str) -> Result<(), String> {
+    if body_chirho.trim().is_empty() {
+        return Err("body_chirho is required".to_string());
+    }
+    if body_chirho.chars().any(|char_chirho| char_chirho == '\0') {
+        return Err("body_chirho must not contain NUL characters".to_string());
+    }
+    Ok(())
+}
+
 fn open_db_chirho(path_chirho: Option<PathBuf>) -> Result<Connection, String> {
     let path_chirho = path_chirho.unwrap_or_else(default_db_path_chirho);
     if let Some(parent_chirho) = path_chirho.parent() {
@@ -235,7 +245,7 @@ fn post_message_chirho(
     validate_token_chirho("from_agent_chirho", &request_chirho.from_agent_chirho)?;
     validate_token_chirho("room_chirho", &request_chirho.room_chirho)?;
     validate_token_chirho("topic_chirho", &request_chirho.topic_chirho)?;
-    validate_token_chirho("body_chirho", &request_chirho.body_chirho)?;
+    validate_body_chirho(&request_chirho.body_chirho)?;
     let from_identity_chirho = identity_chirho(
         &request_chirho.from_session_chirho,
         &request_chirho.from_agent_chirho,
@@ -1150,6 +1160,13 @@ mod tests_chirho {
             percent_decode_chirho(&encoded_chirho).unwrap(),
             value_chirho
         );
+    }
+
+    #[test]
+    fn body_validation_allows_multiline_agent_messages_chirho() {
+        validate_body_chirho("CAIRN_CHIRHO/GPT SENDS: line one\n\nDetails line two.").unwrap();
+        assert!(validate_body_chirho("").is_err());
+        assert!(validate_body_chirho("bad\0body").is_err());
     }
 
     #[test]
