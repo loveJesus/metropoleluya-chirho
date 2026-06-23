@@ -47,6 +47,7 @@ struct PostRequestChirho {
 struct MessageViewChirho {
     id_chirho: i64,
     at_ms_chirho: i64,
+    at_text_chirho: String,
     from_identity_chirho: String,
     room_chirho: String,
     topic_chirho: String,
@@ -77,6 +78,38 @@ fn now_ms_chirho() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_secs(0))
         .as_millis() as i64
+}
+
+pub(crate) fn format_timestamp_chirho(at_ms_chirho: i64) -> String {
+    let seconds_chirho = at_ms_chirho.div_euclid(1_000);
+    let millis_chirho = at_ms_chirho.rem_euclid(1_000);
+    let days_chirho = seconds_chirho.div_euclid(86_400);
+    let seconds_of_day_chirho = seconds_chirho.rem_euclid(86_400);
+    let (year_chirho, month_chirho, day_chirho) = civil_from_unix_days_chirho(days_chirho);
+    let hour_chirho = seconds_of_day_chirho / 3_600;
+    let minute_chirho = (seconds_of_day_chirho % 3_600) / 60;
+    let second_chirho = seconds_of_day_chirho % 60;
+    format!(
+        "{year_chirho:04}-{month_chirho:02}-{day_chirho:02} {hour_chirho:02}:{minute_chirho:02}:{second_chirho:02}.{millis_chirho:03}Z"
+    )
+}
+
+fn civil_from_unix_days_chirho(days_chirho: i64) -> (i64, u32, u32) {
+    let shifted_days_chirho = days_chirho + 719_468;
+    let era_chirho = shifted_days_chirho.div_euclid(146_097);
+    let day_of_era_chirho = shifted_days_chirho - era_chirho * 146_097;
+    let year_of_era_chirho = (day_of_era_chirho - day_of_era_chirho / 1_460
+        + day_of_era_chirho / 36_524
+        - day_of_era_chirho / 146_096)
+        / 365;
+    let year_chirho = year_of_era_chirho + era_chirho * 400;
+    let day_of_year_chirho = day_of_era_chirho
+        - (365 * year_of_era_chirho + year_of_era_chirho / 4 - year_of_era_chirho / 100);
+    let month_piece_chirho = (5 * day_of_year_chirho + 2) / 153;
+    let day_chirho = day_of_year_chirho - (153 * month_piece_chirho + 2) / 5 + 1;
+    let month_chirho = month_piece_chirho + if month_piece_chirho < 10 { 3 } else { -9 };
+    let adjusted_year_chirho = year_chirho + if month_chirho <= 2 { 1 } else { 0 };
+    (adjusted_year_chirho, month_chirho as u32, day_chirho as u32)
 }
 
 fn default_db_path_chirho() -> PathBuf {
@@ -163,6 +196,30 @@ fn init_db_chirho(conn_chirho: &Connection) -> Result<(), String> {
                 error_chirho text,
                 at_ms_chirho integer not null
             );
+            create view if not exists messages_with_time_chirho as
+                select
+                    id_chirho,
+                    at_ms_chirho,
+                    datetime(at_ms_chirho / 1000, 'unixepoch')
+                        || printf('.%03dZ', at_ms_chirho % 1000) as at_text_chirho,
+                    from_identity_chirho,
+                    room_chirho,
+                    topic_chirho,
+                    body_chirho
+                from messages_chirho;
+            create view if not exists deliveries_with_time_chirho as
+                select
+                    id_chirho,
+                    message_id_chirho,
+                    to_identity_chirho,
+                    tmux_target_chirho,
+                    alive_chirho,
+                    delivered_chirho,
+                    error_chirho,
+                    at_ms_chirho,
+                    datetime(at_ms_chirho / 1000, 'unixepoch')
+                        || printf('.%03dZ', at_ms_chirho % 1000) as at_text_chirho
+                from deliveries_chirho;
             "#,
         )
         .map_err(|err_chirho| err_chirho.to_string())
@@ -252,6 +309,7 @@ fn post_message_chirho(
         &request_chirho.from_session_chirho,
         &request_chirho.from_agent_chirho,
     );
+    let message_at_ms_chirho = now_ms_chirho();
     let tx_chirho = conn_chirho
         .transaction()
         .map_err(|err_chirho| err_chirho.to_string())?;
@@ -262,7 +320,7 @@ fn post_message_chirho(
             values (?1, ?2, ?3, ?4, ?5)
             "#,
             params![
-                now_ms_chirho(),
+                message_at_ms_chirho,
                 from_identity_chirho,
                 request_chirho.room_chirho,
                 request_chirho.topic_chirho,
@@ -281,6 +339,7 @@ fn post_message_chirho(
     for target_chirho in targets_chirho {
         let text_chirho = format_delivery_chirho(
             message_id_chirho,
+            message_at_ms_chirho,
             &from_identity_chirho,
             &request_chirho.room_chirho,
             &request_chirho.topic_chirho,
@@ -323,6 +382,8 @@ fn post_message_chirho(
     Ok(json!({
         "ok_chirho": true,
         "message_id_chirho": message_id_chirho,
+        "at_ms_chirho": message_at_ms_chirho,
+        "at_text_chirho": format_timestamp_chirho(message_at_ms_chirho),
         "delivery_count_chirho": delivered_count_chirho
     }))
 }
@@ -410,9 +471,11 @@ fn list_messages_chirho(
         .query_map(
             params![room_chirho, after_chirho, limit_chirho],
             |row_chirho| {
+                let at_ms_chirho: i64 = row_chirho.get(1)?;
                 Ok(MessageViewChirho {
                     id_chirho: row_chirho.get(0)?,
-                    at_ms_chirho: row_chirho.get(1)?,
+                    at_ms_chirho,
+                    at_text_chirho: format_timestamp_chirho(at_ms_chirho),
                     from_identity_chirho: row_chirho.get(2)?,
                     room_chirho: row_chirho.get(3)?,
                     topic_chirho: row_chirho.get(4)?,
@@ -596,13 +659,15 @@ fn probe_tmux_target_chirho(target_chirho: &str) -> TmuxProbeChirho {
 
 fn format_delivery_chirho(
     message_id_chirho: i64,
+    at_ms_chirho: i64,
     from_identity_chirho: &str,
     room_chirho: &str,
     topic_chirho: &str,
     body_chirho: &str,
 ) -> String {
+    let at_text_chirho = format_timestamp_chirho(at_ms_chirho);
     format!(
-        "METROPOLELUYA_CHIRHO MESSAGE #{message_id_chirho} FROM {from_identity_chirho} ROOM {room_chirho} TOPIC {topic_chirho}\n{body_chirho}"
+        "METROPOLELUYA_CHIRHO MESSAGE #{message_id_chirho} AT {at_text_chirho} FROM {from_identity_chirho} ROOM {room_chirho} TOPIC {topic_chirho}\n{body_chirho}"
     )
 }
 
@@ -1035,8 +1100,12 @@ fn run_watch_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
                     .unwrap_or(after_chirho);
                 after_chirho = after_chirho.max(id_chirho);
                 println!(
-                    "\n#{} {} [{}]\n{}\n",
+                    "\n#{} {} {} [{}]\n{}\n",
                     id_chirho,
+                    message_chirho
+                        .get("at_text_chirho")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown-time"),
                     message_chirho
                         .get("from_identity_chirho")
                         .and_then(Value::as_str)
@@ -1196,6 +1265,15 @@ mod tests_chirho {
     }
 
     #[test]
+    fn timestamp_formatter_uses_utc_text_chirho() {
+        assert_eq!(format_timestamp_chirho(0), "1970-01-01 00:00:00.000Z");
+        assert_eq!(
+            format_timestamp_chirho(1_704_067_200_123),
+            "2024-01-01 00:00:00.123Z"
+        );
+    }
+
+    #[test]
     fn body_validation_allows_multiline_agent_messages_chirho() {
         validate_body_chirho("PROJECT_CHIRHO/GPT SENDS: line one\n\nDetails line two.").unwrap();
         assert!(validate_body_chirho("").is_err());
@@ -1220,5 +1298,40 @@ mod tests_chirho {
         assert_eq!(response_chirho["identity_chirho"], "TEST_CHIRHO/gpt_chirho");
         let agents_chirho = list_agents_chirho(&conn_chirho, Some("room-chirho")).unwrap();
         assert_eq!(agents_chirho["agents_chirho"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sqlite_messages_view_exposes_readable_timestamp_chirho() {
+        let conn_chirho = Connection::open_in_memory().unwrap();
+        init_db_chirho(&conn_chirho).unwrap();
+        conn_chirho
+            .execute(
+                r#"
+                insert into messages_chirho (
+                    at_ms_chirho, from_identity_chirho, room_chirho, topic_chirho, body_chirho
+                ) values (?1, ?2, ?3, ?4, ?5)
+                "#,
+                params![
+                    1_704_067_200_123_i64,
+                    "PROJECT_CHIRHO/gpt_chirho",
+                    "project-chirho",
+                    "audit-chirho",
+                    "body-chirho"
+                ],
+            )
+            .unwrap();
+        let at_text_chirho: String = conn_chirho
+            .query_row(
+                "select at_text_chirho from messages_with_time_chirho where id_chirho = 1",
+                [],
+                |row_chirho| row_chirho.get(0),
+            )
+            .unwrap();
+        assert_eq!(at_text_chirho, "2024-01-01 00:00:00.123Z");
+        let listed_chirho = list_messages_chirho(&conn_chirho, "project-chirho", 0).unwrap();
+        assert_eq!(
+            listed_chirho["messages_chirho"][0]["at_text_chirho"],
+            "2024-01-01 00:00:00.123Z"
+        );
     }
 }

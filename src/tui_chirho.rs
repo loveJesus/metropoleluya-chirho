@@ -30,6 +30,7 @@ const MAX_MESSAGES_CHIRHO: usize = 300;
 #[derive(Debug, Clone)]
 struct TuiMessageChirho {
     id_chirho: i64,
+    at_text_chirho: String,
     from_identity_chirho: String,
     topic_chirho: String,
     body_chirho: String,
@@ -155,6 +156,11 @@ fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String
         state_chirho.after_chirho = state_chirho.after_chirho.max(id_chirho);
         state_chirho.messages_chirho.push(TuiMessageChirho {
             id_chirho,
+            at_text_chirho: message_chirho
+                .get("at_text_chirho")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown-time")
+                .to_string(),
             from_identity_chirho: message_chirho
                 .get("from_identity_chirho")
                 .and_then(Value::as_str)
@@ -414,6 +420,10 @@ fn render_transcript_chirho(
                 Style::default().fg(Color::DarkGray),
             ),
             Span::styled(
+                format!("{} ", message_chirho.at_text_chirho),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
                 &message_chirho.from_identity_chirho,
                 Style::default()
                     .fg(Color::Cyan)
@@ -561,6 +571,18 @@ mod tests_chirho {
         assert_eq!(agent_chirho.identity_chirho, "PROJECT_CHIRHO/gpt_chirho");
         assert!(agent_chirho.alive_chirho);
         assert!(agent_chirho.topics_chirho.is_empty());
+    }
+
+    #[test]
+    fn tui_message_keeps_readable_timestamp_chirho() {
+        let message_chirho = TuiMessageChirho {
+            id_chirho: 7,
+            at_text_chirho: "2024-01-01 00:00:00.123Z".to_string(),
+            from_identity_chirho: "PROJECT_CHIRHO/gpt_chirho".to_string(),
+            topic_chirho: "audit-chirho".to_string(),
+            body_chirho: "body-chirho".to_string(),
+        };
+        assert_eq!(message_chirho.at_text_chirho, "2024-01-01 00:00:00.123Z");
     }
 
     #[test]

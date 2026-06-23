@@ -25,7 +25,7 @@ The preferred path is the centralized local HTTP broker:
   - `PROJECT_CHIRHO/gemini_chirho`
   - `OTHER_PROJECT_CHIRHO/gpt_frontend_chirho`
 
-The broker stores agents, subscriptions, message history, delivery attempts, tmux liveness, window indexes, and pane ids in SQLite. It delivers to agent panes with `tmux paste-buffer`, Enter, one-second delay, Enter. The Ratatui console is the human-visible room view and posting surface.
+The broker stores agents, subscriptions, message history, delivery attempts, tmux liveness, window indexes, pane ids, and message timestamps in SQLite. It delivers to agent panes with `tmux paste-buffer`, Enter, one-second delay, Enter. The Ratatui console is the human-visible room view and posting surface.
 
 ## Core Rule
 
@@ -202,6 +202,8 @@ Read recent messages:
 ```bash
 curl -fsS 'http://127.0.0.1:37371/v1/messages_chirho?room_chirho=project-chirho&after_chirho=0'
 ```
+
+Message API responses include `at_ms_chirho` plus readable UTC `at_text_chirho`; delivered tmux headers, `watch`, and the TUI show that same timestamp. Direct SQLite inspection can use `messages_with_time_chirho` and `deliveries_with_time_chirho`.
 
 If a message was important, inspect the visible room window or the broker response. The response includes `delivery_count_chirho`.
 

@@ -15,7 +15,7 @@ One server runs for the computer. Each tmux project/session registers agents int
 - `OTHER_PROJECT_CHIRHO/gpt_chirho`
 - future scoped agents like `PROJECT_CHIRHO/gpt_admin_chirho`
 
-The server stores room membership, message history, delivery attempts, tmux window indexes, pane ids, and liveness in SQLite. It delivers messages into agent panes through `tmux paste-buffer`, then sends Enter, waits one second, and sends Enter again.
+The server stores room membership, message history, delivery attempts, tmux window indexes, pane ids, liveness, and message timestamps in SQLite. It delivers messages into agent panes through `tmux paste-buffer`, then sends Enter, waits one second, and sends Enter again.
 
 ## Quick Start
 
@@ -76,7 +76,7 @@ cargo run -- tui \
   --topic direction-chirho
 ```
 
-The TUI is the human-facing office view. It shows the room transcript, each registered agent's tmux pane/liveness, and the topics each agent is subscribed to. In this model, a room is an open office and a topic is a workspace inside that room. Agents still receive messages through their own tmux interface by broker delivery; the TUI only watches history and posts as the human/operator identity.
+The TUI is the human-facing office view. It shows the room transcript with UTC timestamps, each registered agent's tmux pane/liveness, and the topics each agent is subscribed to. In this model, a room is an open office and a topic is a workspace inside that room. Agents still receive messages through their own tmux interface by broker delivery; the TUI only watches history and posts as the human/operator identity.
 
 TUI commands:
 
@@ -94,7 +94,9 @@ TUI commands:
 - `GET /v1/agents_chirho?room_chirho=<room>`
 - `POST /v1/refresh_chirho`
 
-The default database is `~/.metropoleluya-chirho/metropoleluya-chirho.sqlite`.
+Message responses include both `at_ms_chirho` and a readable UTC `at_text_chirho`. Tmux-delivered message headers, `watch`, and the TUI display the same readable timestamp.
+
+The default database is `~/.metropoleluya-chirho/metropoleluya-chirho.sqlite`. The raw tables keep millisecond timestamps, and the `messages_with_time_chirho` and `deliveries_with_time_chirho` views expose readable UTC timestamp text for direct SQLite inspection.
 
 ## Agent Skill
 
