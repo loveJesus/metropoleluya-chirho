@@ -4,9 +4,16 @@ use crate::{
     arg_value_chirho, default_topic_chirho, http_client_chirho, percent_encode_chirho,
     require_arg_chirho, server_arg_chirho,
 };
+use crate::tui_membership_chirho::{
+    handle_listeners_key_chirho, handle_modal_key_chirho, handle_mouse_event_chirho,
+    render_membership_overlay_chirho, toggle_focus_chirho, AgentRowHitChirho,
+    MembershipHitsChirho, TuiFocusChirho, TuiModeChirho, ADD_BUTTON_LABEL_CHIRHO,
+};
 use crossterm::event::{
-    self, Event as CrosstermEventChirho, KeyCode as KeyCodeChirho,
-    KeyEventKind as KeyEventKindChirho, KeyModifiers as KeyModifiersChirho,
+    self, DisableMouseCapture as DisableMouseCaptureChirho,
+    EnableMouseCapture as EnableMouseCaptureChirho, Event as CrosstermEventChirho,
+    KeyCode as KeyCodeChirho, KeyEvent as KeyEventChirho, KeyEventKind as KeyEventKindChirho,
+    KeyModifiers as KeyModifiersChirho,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -24,11 +31,11 @@ use serde_json::{json, Value};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
 
-const REFRESH_INTERVAL_CHIRHO: Duration = Duration::from_millis(750);
+pub(crate) const REFRESH_INTERVAL_CHIRHO: Duration = Duration::from_millis(750);
 const MAX_MESSAGES_CHIRHO: usize = 300;
 
 #[derive(Debug, Clone)]
-struct TuiMessageChirho {
+pub(crate) struct TuiMessageChirho {
     id_chirho: i64,
     at_text_chirho: String,
     from_identity_chirho: String,
@@ -37,28 +44,63 @@ struct TuiMessageChirho {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TuiAgentChirho {
-    identity_chirho: String,
-    alive_chirho: bool,
-    window_index_chirho: Option<String>,
-    pane_id_chirho: Option<String>,
-    topics_chirho: Vec<String>,
+pub(crate) struct TuiAgentChirho {
+    pub(crate) identity_chirho: String,
+    pub(crate) alive_chirho: bool,
+    pub(crate) window_index_chirho: Option<String>,
+    pub(crate) pane_id_chirho: Option<String>,
+    pub(crate) topics_chirho: Vec<String>,
 }
 
 #[derive(Debug)]
-struct TuiStateChirho {
-    server_chirho: String,
-    session_chirho: String,
-    agent_chirho: String,
-    room_chirho: String,
-    topic_chirho: String,
-    input_chirho: String,
-    scroll_offset_chirho: usize,
-    status_chirho: String,
-    after_chirho: i64,
-    messages_chirho: Vec<TuiMessageChirho>,
-    agents_chirho: Vec<TuiAgentChirho>,
-    last_refresh_chirho: Instant,
+pub(crate) struct TuiStateChirho {
+    pub(crate) server_chirho: String,
+    pub(crate) session_chirho: String,
+    pub(crate) agent_chirho: String,
+    pub(crate) room_chirho: String,
+    pub(crate) topic_chirho: String,
+    pub(crate) input_chirho: String,
+    pub(crate) scroll_offset_chirho: usize,
+    pub(crate) status_chirho: String,
+    pub(crate) after_chirho: i64,
+    pub(crate) messages_chirho: Vec<TuiMessageChirho>,
+    pub(crate) agents_chirho: Vec<TuiAgentChirho>,
+    pub(crate) last_refresh_chirho: Instant,
+    pub(crate) mode_chirho: TuiModeChirho,
+    pub(crate) focus_chirho: TuiFocusChirho,
+    pub(crate) selected_agent_chirho: usize,
+    pub(crate) hits_chirho: MembershipHitsChirho,
+}
+
+impl TuiStateChirho {
+    /// Fresh console state; also the constructor the membership tests use.
+    pub(crate) fn new_chirho(
+        server_chirho: String,
+        session_chirho: String,
+        agent_chirho: String,
+        room_chirho: String,
+        topic_chirho: String,
+        after_chirho: i64,
+    ) -> Self {
+        TuiStateChirho {
+            server_chirho,
+            session_chirho,
+            agent_chirho,
+            room_chirho,
+            topic_chirho,
+            input_chirho: String::new(),
+            scroll_offset_chirho: 0,
+            status_chirho: "starting room console".to_string(),
+            after_chirho,
+            messages_chirho: Vec::new(),
+            agents_chirho: Vec::new(),
+            last_refresh_chirho: Instant::now() - REFRESH_INTERVAL_CHIRHO,
+            mode_chirho: TuiModeChirho::NormalChirho,
+            focus_chirho: TuiFocusChirho::ComposeChirho,
+            selected_agent_chirho: 0,
+            hits_chirho: MembershipHitsChirho::default(),
+        }
+    }
 }
 
 struct TerminalRestoreChirho;
@@ -66,31 +108,33 @@ struct TerminalRestoreChirho;
 impl Drop for TerminalRestoreChirho {
     fn drop(&mut self) {
         let _ = disable_raw_mode_chirho();
-        let _ = execute!(io::stdout(), LeaveAlternateScreenChirho);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCaptureChirho,
+            LeaveAlternateScreenChirho
+        );
     }
 }
 
 pub(crate) fn run_tui_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let mut state_chirho = TuiStateChirho {
-        server_chirho: server_arg_chirho(args_chirho),
-        session_chirho: require_arg_chirho(args_chirho, "--session")?,
-        agent_chirho: require_arg_chirho(args_chirho, "--agent")?,
-        room_chirho: require_arg_chirho(args_chirho, "--room")?,
-        topic_chirho: arg_value_chirho(args_chirho, "--topic").unwrap_or_else(default_topic_chirho),
-        input_chirho: String::new(),
-        scroll_offset_chirho: 0,
-        status_chirho: "starting room console".to_string(),
-        after_chirho: arg_value_chirho(args_chirho, "--after")
+    let mut state_chirho = TuiStateChirho::new_chirho(
+        server_arg_chirho(args_chirho),
+        require_arg_chirho(args_chirho, "--session")?,
+        require_arg_chirho(args_chirho, "--agent")?,
+        require_arg_chirho(args_chirho, "--room")?,
+        arg_value_chirho(args_chirho, "--topic").unwrap_or_else(default_topic_chirho),
+        arg_value_chirho(args_chirho, "--after")
             .and_then(|value_chirho| value_chirho.parse::<i64>().ok())
             .unwrap_or(0),
-        messages_chirho: Vec::new(),
-        agents_chirho: Vec::new(),
-        last_refresh_chirho: Instant::now() - REFRESH_INTERVAL_CHIRHO,
-    };
+    );
     enable_raw_mode_chirho().map_err(|err_chirho| err_chirho.to_string())?;
     let mut stdout_chirho = io::stdout();
-    execute!(stdout_chirho, EnterAlternateScreenChirho)
-        .map_err(|err_chirho| err_chirho.to_string())?;
+    execute!(
+        stdout_chirho,
+        EnterAlternateScreenChirho,
+        EnableMouseCaptureChirho
+    )
+    .map_err(|err_chirho| err_chirho.to_string())?;
     let _restore_chirho = TerminalRestoreChirho;
     let backend_chirho = CrosstermBackend::new(stdout_chirho);
     let mut terminal_chirho =
@@ -269,19 +313,48 @@ fn handle_event_chirho(
     state_chirho: &mut TuiStateChirho,
     event_chirho: CrosstermEventChirho,
 ) -> Result<bool, String> {
-    let CrosstermEventChirho::Key(key_chirho) = event_chirho else {
-        return Ok(false);
-    };
+    match event_chirho {
+        CrosstermEventChirho::Key(key_chirho) => handle_key_event_chirho(state_chirho, key_chirho),
+        CrosstermEventChirho::Mouse(mouse_chirho) => {
+            handle_mouse_event_chirho(state_chirho, mouse_chirho);
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Keyboard routing: open popups first, then the Tab focus toggle, then
+/// whichever pane owns the focus (compose box types; listeners list gets the
+/// membership-admin keys). Part of
+/// spec-chirho/workflows-chirho/room-membership-admin-flow-chirho.md.
+fn handle_key_event_chirho(
+    state_chirho: &mut TuiStateChirho,
+    key_chirho: KeyEventChirho,
+) -> Result<bool, String> {
     if !matches!(
         key_chirho.kind,
         KeyEventKindChirho::Press | KeyEventKindChirho::Repeat
     ) {
         return Ok(false);
     }
+    if key_chirho.code == KeyCodeChirho::Char('c')
+        && key_chirho.modifiers.contains(KeyModifiersChirho::CONTROL)
+    {
+        return Ok(true);
+    }
+    if state_chirho.mode_chirho != TuiModeChirho::NormalChirho {
+        handle_modal_key_chirho(state_chirho, key_chirho);
+        return Ok(false);
+    }
+    if key_chirho.code == KeyCodeChirho::Tab {
+        toggle_focus_chirho(state_chirho);
+        return Ok(false);
+    }
+    if state_chirho.focus_chirho == TuiFocusChirho::ListenersChirho {
+        handle_listeners_key_chirho(state_chirho, key_chirho);
+        return Ok(false);
+    }
     match key_chirho.code {
-        KeyCodeChirho::Char('c') if key_chirho.modifiers.contains(KeyModifiersChirho::CONTROL) => {
-            Ok(true)
-        }
         KeyCodeChirho::Char(value_chirho) => {
             state_chirho.input_chirho.push(value_chirho);
             Ok(false)
@@ -381,7 +454,7 @@ fn post_tui_message_chirho(
     Ok(())
 }
 
-fn render_tui_chirho(frame_chirho: &mut Frame<'_>, state_chirho: &TuiStateChirho) {
+fn render_tui_chirho(frame_chirho: &mut Frame<'_>, state_chirho: &mut TuiStateChirho) {
     let area_chirho = frame_chirho.area();
     frame_chirho.render_widget(Clear, area_chirho);
     let root_chunks_chirho = Layout::default()
@@ -400,6 +473,7 @@ fn render_tui_chirho(frame_chirho: &mut Frame<'_>, state_chirho: &TuiStateChirho
     render_transcript_chirho(frame_chirho, body_chunks_chirho[0], state_chirho);
     render_agents_chirho(frame_chirho, body_chunks_chirho[1], state_chirho);
     render_input_chirho(frame_chirho, root_chunks_chirho[2], state_chirho);
+    render_membership_overlay_chirho(frame_chirho, area_chirho, state_chirho);
 }
 
 fn render_header_chirho(
@@ -511,16 +585,60 @@ fn visible_transcript_lines_chirho<'line_chirho>(
         .collect()
 }
 
+/// Renders the listeners pane and records the hit-test geometry that the
+/// mouse handlers in tui_membership_chirho test against (see
+/// spec-chirho/workflows-chirho/room-membership-admin-flow-chirho.md). Wrap
+/// stays off so every listener occupies exactly four rows and the row math
+/// below matches what is on screen.
 fn render_agents_chirho(
     frame_chirho: &mut Frame<'_>,
     area_chirho: Rect,
-    state_chirho: &TuiStateChirho,
+    state_chirho: &mut TuiStateChirho,
 ) {
+    let focused_chirho = state_chirho.focus_chirho == TuiFocusChirho::ListenersChirho;
+    let selected_chirho = state_chirho.selected_agent_chirho;
+    let content_top_chirho = area_chirho.y.saturating_add(1);
+    let content_bottom_chirho = area_chirho.bottom().saturating_sub(2);
+    state_chirho.hits_chirho.listeners_rect_chirho = Some(area_chirho);
+    state_chirho.hits_chirho.agent_rows_chirho.clear();
+    let add_row_chirho = content_top_chirho.saturating_add(1);
+    state_chirho.hits_chirho.add_button_rect_chirho = if add_row_chirho <= content_bottom_chirho {
+        Some(Rect {
+            x: area_chirho.x.saturating_add(1),
+            y: add_row_chirho,
+            width: (ADD_BUTTON_LABEL_CHIRHO.len() as u16).min(area_chirho.width.saturating_sub(2)),
+            height: 1,
+        })
+    } else {
+        None
+    };
     let mut lines_chirho = vec![Line::from(vec![
         Span::styled("Office model: ", Style::default().fg(Color::Yellow)),
         Span::raw("room = open office, topic = workspace"),
     ])];
-    for agent_chirho in &state_chirho.agents_chirho {
+    lines_chirho.push(Line::from(Span::styled(
+        ADD_BUTTON_LABEL_CHIRHO,
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (index_chirho, agent_chirho) in state_chirho.agents_chirho.iter().enumerate() {
+        let row_start_chirho = content_top_chirho.saturating_add(2 + (index_chirho as u16) * 4);
+        if row_start_chirho <= content_bottom_chirho {
+            state_chirho
+                .hits_chirho
+                .agent_rows_chirho
+                .push(AgentRowHitChirho {
+                    row_start_chirho,
+                    row_end_chirho: row_start_chirho.saturating_add(2).min(content_bottom_chirho),
+                    agent_index_chirho: index_chirho,
+                });
+        }
+        let mut identity_style_chirho = Style::default().fg(Color::Cyan);
+        if focused_chirho && index_chirho == selected_chirho {
+            identity_style_chirho = identity_style_chirho.add_modifier(Modifier::REVERSED);
+        }
         let alive_chirho = if agent_chirho.alive_chirho {
             Span::styled("alive", Style::default().fg(Color::Green))
         } else {
@@ -532,10 +650,7 @@ fn render_agents_chirho(
             agent_chirho.pane_id_chirho.as_deref().unwrap_or("?")
         );
         lines_chirho.push(Line::from(vec![
-            Span::styled(
-                &agent_chirho.identity_chirho,
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::styled(&agent_chirho.identity_chirho, identity_style_chirho),
             Span::raw(" "),
             alive_chirho,
         ]));
@@ -554,13 +669,16 @@ fn render_agents_chirho(
         )));
         lines_chirho.push(Line::from(""));
     }
-    let agents_chirho = Paragraph::new(lines_chirho)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("listeners-chirho"),
-        )
-        .wrap(Wrap { trim: true });
+    let title_chirho = if focused_chirho {
+        "listeners-chirho (focused)"
+    } else {
+        "listeners-chirho"
+    };
+    let agents_chirho = Paragraph::new(lines_chirho).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title_chirho),
+    );
     frame_chirho.render_widget(agents_chirho, area_chirho);
 }
 
@@ -578,9 +696,14 @@ fn render_input_chirho(
             Span::styled("> ", Style::default().fg(Color::Green)),
             Span::raw(&state_chirho.input_chirho),
         ]),
-        Line::from(
-            "commands: /topic name-chirho, /clear, /quit, PageUp/PageDown/Home/End, Esc or Ctrl-C",
-        ),
+        Line::from(match state_chirho.focus_chirho {
+            TuiFocusChirho::ComposeChirho => {
+                "commands: /topic name-chirho, /clear, /quit | Tab focuses listeners | PageUp/PageDown/Home/End | Esc/Ctrl-C quit"
+            }
+            TuiFocusChirho::ListenersChirho => {
+                "listeners: Up/Down select, Enter menu, x/Delete remove, a/+ add | Tab back to compose | right-click a listener, click [ + add ]"
+            }
+        }),
     ];
     let block_chirho = Paragraph::new(input_chirho)
         .block(Block::default().borders(Borders::ALL).title("speak-chirho"))

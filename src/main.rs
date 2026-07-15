@@ -14,6 +14,10 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod tui_chirho;
+mod tui_membership_chirho;
+
+#[cfg(test)]
+mod main_tests_chirho;
 
 const DEFAULT_SERVER_CHIRHO: &str = "http://127.0.0.1:37371";
 const BUFFER_NAME_CHIRHO: &str = "metropoleluya-chirho";
@@ -27,6 +31,8 @@ struct RegisterRequestChirho {
     rooms_chirho: Vec<String>,
     #[serde(default)]
     topics_chirho: Vec<String>,
+    #[serde(default)]
+    notify_actor_chirho: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +47,15 @@ struct PostRequestChirho {
     to_chirho: Vec<String>,
     #[serde(default)]
     deliver_to_sender_chirho: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveRequestChirho {
+    from_session_chirho: String,
+    from_agent_chirho: String,
+    session_chirho: String,
+    agent_chirho: String,
+    room_chirho: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -225,6 +240,9 @@ fn init_db_chirho(conn_chirho: &Connection) -> Result<(), String> {
         .map_err(|err_chirho| err_chirho.to_string())
 }
 
+/// Registration also serves the TUI "add to room" flow
+/// (spec-chirho/workflows-chirho/room-membership-admin-flow-chirho.md): when
+/// notify_actor_chirho is set, the newcomer's pane gets a best-effort nudge.
 fn register_agent_chirho(
     conn_chirho: &Connection,
     request_chirho: RegisterRequestChirho,
@@ -232,6 +250,9 @@ fn register_agent_chirho(
     validate_token_chirho("session_chirho", &request_chirho.session_chirho)?;
     validate_token_chirho("agent_chirho", &request_chirho.agent_chirho)?;
     validate_token_chirho("tmux_target_chirho", &request_chirho.tmux_target_chirho)?;
+    if let Some(actor_chirho) = request_chirho.notify_actor_chirho.as_deref() {
+        validate_token_chirho("notify_actor_chirho", actor_chirho)?;
+    }
     let identity_chirho =
         identity_chirho(&request_chirho.session_chirho, &request_chirho.agent_chirho);
     let probe_chirho = probe_tmux_target_chirho(&request_chirho.tmux_target_chirho);
@@ -268,8 +289,8 @@ fn register_agent_chirho(
     } else {
         request_chirho.topics_chirho
     };
-    for room_chirho in request_chirho.rooms_chirho {
-        validate_token_chirho("room_chirho", &room_chirho)?;
+    for room_chirho in &request_chirho.rooms_chirho {
+        validate_token_chirho("room_chirho", room_chirho)?;
         for topic_chirho in &topics_chirho {
             validate_token_chirho("topic_chirho", topic_chirho)?;
             conn_chirho
@@ -285,6 +306,20 @@ fn register_agent_chirho(
         }
     }
 
+    let notified_chirho = match request_chirho.notify_actor_chirho.as_deref() {
+        Some(actor_chirho) if !request_chirho.rooms_chirho.is_empty() => {
+            let notice_chirho = format!(
+                "metropoleluya: you were added to room {} by {}.",
+                request_chirho.rooms_chirho.join(", "),
+                actor_chirho
+            );
+            probe_chirho.alive_chirho
+                && send_tmux_message_chirho(&request_chirho.tmux_target_chirho, &notice_chirho)
+                    .is_ok()
+        }
+        _ => false,
+    };
+
     Ok(json!({
         "ok_chirho": true,
         "identity_chirho": identity_chirho,
@@ -292,7 +327,58 @@ fn register_agent_chirho(
         "observed_session_chirho": probe_chirho.session_chirho,
         "window_index_chirho": probe_chirho.window_index_chirho,
         "pane_id_chirho": probe_chirho.pane_id_chirho,
+        "notified_chirho": notified_chirho,
         "error_chirho": probe_chirho.error_chirho
+    }))
+}
+
+/// Part of the room-membership admin flow
+/// (spec-chirho/workflows-chirho/room-membership-admin-flow-chirho.md): notify
+/// the target pane first (best effort, while it is still subscribed), then
+/// delete only this room's subscription rows. The agents_chirho row and any
+/// other room subscriptions stay intact, so the add flow can reverse this.
+fn remove_agent_chirho(
+    conn_chirho: &Connection,
+    request_chirho: RemoveRequestChirho,
+) -> Result<Value, String> {
+    validate_token_chirho("from_session_chirho", &request_chirho.from_session_chirho)?;
+    validate_token_chirho("from_agent_chirho", &request_chirho.from_agent_chirho)?;
+    validate_token_chirho("session_chirho", &request_chirho.session_chirho)?;
+    validate_token_chirho("agent_chirho", &request_chirho.agent_chirho)?;
+    validate_token_chirho("room_chirho", &request_chirho.room_chirho)?;
+    let from_identity_chirho = identity_chirho(
+        &request_chirho.from_session_chirho,
+        &request_chirho.from_agent_chirho,
+    );
+    let identity_chirho =
+        identity_chirho(&request_chirho.session_chirho, &request_chirho.agent_chirho);
+    let tmux_target_chirho: Option<String> = conn_chirho
+        .query_row(
+            "select tmux_target_chirho from agents_chirho where identity_chirho = ?1",
+            params![identity_chirho],
+            |row_chirho| row_chirho.get(0),
+        )
+        .optional()
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    let notice_chirho = format!(
+        "metropoleluya: you were removed from room {} by {}.",
+        request_chirho.room_chirho, from_identity_chirho
+    );
+    let notified_chirho = tmux_target_chirho.as_deref().is_some_and(|target_chirho| {
+        probe_tmux_target_chirho(target_chirho).alive_chirho
+            && send_tmux_message_chirho(target_chirho, &notice_chirho).is_ok()
+    });
+    let removed_count_chirho = conn_chirho
+        .execute(
+            "delete from subscriptions_chirho where identity_chirho = ?1 and room_chirho = ?2",
+            params![identity_chirho, request_chirho.room_chirho],
+        )
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    Ok(json!({
+        "ok_chirho": true,
+        "identity_chirho": identity_chirho,
+        "removed_count_chirho": removed_count_chirho,
+        "notified_chirho": notified_chirho
     }))
 }
 
@@ -887,6 +973,11 @@ fn route_http_chirho(
                 .map(String::as_str);
             list_agents_chirho(conn_chirho, room_chirho)
         }
+        ("POST", "/v1/remove_chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            remove_agent_chirho(conn_chirho, request_chirho)
+        }
         ("POST", "/v1/refresh_chirho") => refresh_agents_chirho(conn_chirho),
         _ => Err("unknown route".to_string()),
     }
@@ -1043,6 +1134,27 @@ fn run_register_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
             &server_chirho,
             "POST",
             "/v1/register_chirho",
+            Some(&body_chirho)
+        )?
+    );
+    Ok(())
+}
+
+fn run_remove_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
+    let server_chirho = server_arg_chirho(args_chirho);
+    let body_chirho = json!({
+        "from_session_chirho": require_arg_chirho(args_chirho, "--from-session")?,
+        "from_agent_chirho": require_arg_chirho(args_chirho, "--from-agent")?,
+        "session_chirho": require_arg_chirho(args_chirho, "--session")?,
+        "agent_chirho": require_arg_chirho(args_chirho, "--agent")?,
+        "room_chirho": require_arg_chirho(args_chirho, "--room")?
+    });
+    println!(
+        "{}",
+        http_client_chirho(
+            &server_chirho,
+            "POST",
+            "/v1/remove_chirho",
             Some(&body_chirho)
         )?
     );
@@ -1206,6 +1318,7 @@ fn usage_chirho() -> &'static str {
     "usage:
   metropoleluya-chirho server [--bind 127.0.0.1:37371] [--db path]
   metropoleluya-chirho register --session S --agent A --tmux-target T --room R [--topic T]
+  metropoleluya-chirho remove --from-session S --from-agent A --session TS --agent TA --room R
   metropoleluya-chirho post --from-session S --from-agent A --room R [--topic T] (--body TEXT|--body-file PATH) [--to SESSION/agent]
   metropoleluya-chirho watch --room R
   metropoleluya-chirho console --session S --agent A --room R [--topic T]
@@ -1225,6 +1338,7 @@ fn main_chirho() -> Result<(), String> {
             run_server_chirho(&bind_chirho, db_path_chirho)
         }
         "register" => run_register_cli_chirho(&args_chirho),
+        "remove" => run_remove_cli_chirho(&args_chirho),
         "post" => run_post_cli_chirho(&args_chirho),
         "watch" => run_watch_cli_chirho(&args_chirho),
         "console" => run_console_cli_chirho(&args_chirho),
@@ -1242,96 +1356,3 @@ fn main() {
     }
 }
 
-#[cfg(test)]
-mod tests_chirho {
-    use super::*;
-
-    #[test]
-    fn identity_uses_session_slash_agent_chirho() {
-        assert_eq!(
-            identity_chirho("PROJECT_CHIRHO", "gpt_chirho"),
-            "PROJECT_CHIRHO/gpt_chirho"
-        );
-    }
-
-    #[test]
-    fn percent_encoding_round_trips_room_names_chirho() {
-        let value_chirho = "project chirho/topic";
-        let encoded_chirho = percent_encode_chirho(value_chirho);
-        assert_eq!(
-            percent_decode_chirho(&encoded_chirho).unwrap(),
-            value_chirho
-        );
-    }
-
-    #[test]
-    fn timestamp_formatter_uses_utc_text_chirho() {
-        assert_eq!(format_timestamp_chirho(0), "1970-01-01 00:00:00.000Z");
-        assert_eq!(
-            format_timestamp_chirho(1_704_067_200_123),
-            "2024-01-01 00:00:00.123Z"
-        );
-    }
-
-    #[test]
-    fn body_validation_allows_multiline_agent_messages_chirho() {
-        validate_body_chirho("PROJECT_CHIRHO/GPT SENDS: line one\n\nDetails line two.").unwrap();
-        assert!(validate_body_chirho("").is_err());
-        assert!(validate_body_chirho("bad\0body").is_err());
-    }
-
-    #[test]
-    fn in_memory_db_registers_agent_and_room_chirho() {
-        let conn_chirho = Connection::open_in_memory().unwrap();
-        init_db_chirho(&conn_chirho).unwrap();
-        let response_chirho = register_agent_chirho(
-            &conn_chirho,
-            RegisterRequestChirho {
-                session_chirho: "TEST_CHIRHO".to_string(),
-                agent_chirho: "gpt_chirho".to_string(),
-                tmux_target_chirho: "missing-session-chirho:1".to_string(),
-                rooms_chirho: vec!["room-chirho".to_string()],
-                topics_chirho: vec!["audit-chirho".to_string()],
-            },
-        )
-        .unwrap();
-        assert_eq!(response_chirho["identity_chirho"], "TEST_CHIRHO/gpt_chirho");
-        let agents_chirho = list_agents_chirho(&conn_chirho, Some("room-chirho")).unwrap();
-        assert_eq!(agents_chirho["agents_chirho"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn sqlite_messages_view_exposes_readable_timestamp_chirho() {
-        let conn_chirho = Connection::open_in_memory().unwrap();
-        init_db_chirho(&conn_chirho).unwrap();
-        conn_chirho
-            .execute(
-                r#"
-                insert into messages_chirho (
-                    at_ms_chirho, from_identity_chirho, room_chirho, topic_chirho, body_chirho
-                ) values (?1, ?2, ?3, ?4, ?5)
-                "#,
-                params![
-                    1_704_067_200_123_i64,
-                    "PROJECT_CHIRHO/gpt_chirho",
-                    "project-chirho",
-                    "audit-chirho",
-                    "body-chirho"
-                ],
-            )
-            .unwrap();
-        let at_text_chirho: String = conn_chirho
-            .query_row(
-                "select at_text_chirho from messages_with_time_chirho where id_chirho = 1",
-                [],
-                |row_chirho| row_chirho.get(0),
-            )
-            .unwrap();
-        assert_eq!(at_text_chirho, "2024-01-01 00:00:00.123Z");
-        let listed_chirho = list_messages_chirho(&conn_chirho, "project-chirho", 0).unwrap();
-        assert_eq!(
-            listed_chirho["messages_chirho"][0]["at_text_chirho"],
-            "2024-01-01 00:00:00.123Z"
-        );
-    }
-}

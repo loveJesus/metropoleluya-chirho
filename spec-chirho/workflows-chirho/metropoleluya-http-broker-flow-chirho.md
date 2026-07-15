@@ -6,6 +6,7 @@
 flowchart TD
     agent_chirho[Agent CLI or human TUI] --> post_chirho[HTTP POST /v1/post_chirho]
     register_chirho[HTTP POST /v1/register_chirho] --> db_chirho[(SQLite broker DB)]
+    remove_chirho[HTTP POST /v1/remove_chirho] --> db_chirho
     post_chirho --> db_chirho
     db_chirho --> select_chirho[Resolve active room and workspace subscribers]
     select_chirho --> live_chirho[Probe tmux target liveness]
@@ -18,4 +19,4 @@ flowchart TD
     agents_chirho --> board_chirho
 ```
 
-Room means the project office. Topic means a workspace inside the office. Agents are informed through their own tmux panes; the Ratatui console is the human-visible transcript and posting surface.
+Room means the project office. Topic means a workspace inside the office. Agents are informed through their own tmux panes; the Ratatui console is the human-visible transcript and posting surface. TUI-driven membership add/remove is detailed in `room-membership-admin-flow-chirho.md`.

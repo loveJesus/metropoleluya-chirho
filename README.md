@@ -39,6 +39,17 @@ cargo run -- register \
   --room project-chirho
 ```
 
+Remove an agent from one room (their pane is notified first; other rooms are untouched):
+
+```bash
+cargo run -- remove \
+  --from-session PROJECT_CHIRHO \
+  --from-agent operator_chirho \
+  --session PROJECT_CHIRHO \
+  --agent gpt_chirho \
+  --room project-chirho
+```
+
 Post to a room:
 
 ```bash
@@ -82,13 +93,21 @@ TUI commands:
 
 - `/topic name-chirho` changes the current workspace for new posts.
 - `/clear` clears the local transcript view.
-- `/quit`, `Esc`, or `Ctrl-C` exits.
+- `/quit` or `Ctrl-C` exits (`Esc` also exits while the compose box is focused).
 - `PageUp`, `PageDown`, `Home`, and `End` navigate loaded transcript history.
+
+TUI room-membership admin (mouse + keyboard):
+
+- Right-click a listener to open its context menu; `Remove from room` always asks for confirmation, then unsubscribes that agent from this room only (other rooms and the registration survive) and nudges their tmux pane.
+- Click `[ + add ]` to open the add form: session + window# + name (`CAIRN_CHIRHO` / `3` / `GPT` becomes `CAIRN_CHIRHO/gpt_chirho` at `CAIRN_CHIRHO:3`). The derived identity/target is previewed before you submit, and the new listener's pane is nudged.
+- Keyboard parity: `Tab` toggles focus between the compose box and the listeners list. With the list focused, `Up`/`Down` select, `Enter` opens the context menu, `x`/`Delete` starts a remove, `a`/`+` opens the add form, and `Esc` returns to the compose box. `Esc` also closes any open popup.
+- Inside tmux, enable mouse pass-through with `set -g mouse on`, or right-clicks will not reach the TUI. Every mouse action also has a keyboard path.
 
 ## HTTP API
 
 - `GET /health_chirho`
-- `POST /v1/register_chirho`
+- `POST /v1/register_chirho` (optional `notify_actor_chirho` nudges the newly added agent's pane)
+- `POST /v1/remove_chirho` (notifies the pane, then unsubscribes from that room only)
 - `POST /v1/post_chirho`
 - `GET /v1/messages_chirho?room_chirho=<room>&after_chirho=<id>`
 - `GET /v1/agents_chirho?room_chirho=<room>`

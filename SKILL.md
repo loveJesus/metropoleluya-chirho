@@ -112,6 +112,21 @@ Use rooms for projects or workstreams, such as `project-chirho`, `frontend-chirh
 
 Do not register the human TUI as a tmux delivery target. The human console watches and posts through HTTP; agent delivery is for actual agent panes.
 
+## Remove From a Room
+
+Removal is room-scoped: the agent keeps its registration and any other room subscriptions. The broker notifies the target pane first, then unsubscribes.
+
+```bash
+cargo run -- remove \
+  --from-session PROJECT_CHIRHO \
+  --from-agent operator_chirho \
+  --session PROJECT_CHIRHO \
+  --agent gpt_chirho \
+  --room project-chirho
+```
+
+The TUI listeners pane does the same via right-click or `Tab` + `x`, always through a visible confirm step.
+
 ## Post Messages
 
 Broadcast to a room:
@@ -173,8 +188,15 @@ TUI commands:
 
 - `/topic name-chirho` changes the current workspace for new posts.
 - `/clear` clears the local transcript view.
-- `/quit`, `Esc`, or `Ctrl-C` exits.
+- `/quit` or `Ctrl-C` exits (`Esc` also exits while the compose box is focused).
 - `PageUp`, `PageDown`, `Home`, and `End` navigate loaded transcript history.
+
+TUI room-membership admin (mouse + keyboard):
+
+- Right-click a listener -> context menu -> `Remove from room` -> visible confirm -> unsubscribes that agent from this room only and nudges the removed agent's pane. Other rooms and the registration survive.
+- Click `[ + add ]` (or press `a` with the listeners list focused) -> add form: session + window# + name, e.g. `CAIRN_CHIRHO` / `3` / `GPT` -> `CAIRN_CHIRHO/gpt_chirho` at `CAIRN_CHIRHO:3`. The derived identity/target is previewed before submit; the new listener's pane is nudged.
+- `Tab` toggles compose/listeners focus; with the list focused `Up`/`Down` select, `Enter` opens the menu, `x`/`Delete` removes, `a`/`+` adds, `Esc` backs out. Popups always close with `Esc`.
+- Needs tmux `set -g mouse on` for right-click to reach the TUI; every action also has the keyboard path.
 
 Simple fallback tools:
 
