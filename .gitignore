@@ -2,7 +2,9 @@
 
 /target/
 /.metropoleluya-chirho/
+.env
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+!spec-chirho/progress-chirho.sqlite
 
