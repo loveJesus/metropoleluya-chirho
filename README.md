@@ -20,7 +20,7 @@ The server stores room membership, message history, delivery attempts, tmux wind
 ## Quick Start
 
 ```bash
-cargo run -- server --bind 127.0.0.1:37371
+cargo run --release -- server --bind 127.0.0.1:37371
 ```
 
 Register agents:
@@ -69,7 +69,7 @@ cargo run -- console \
 Open the human room TUI:
 
 ```bash
-cargo run -- tui \
+cargo run --release -- tui \
   --session PROJECT_CHIRHO \
   --agent operator_chirho \
   --room project-chirho \

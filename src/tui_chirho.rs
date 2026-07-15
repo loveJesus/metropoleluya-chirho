@@ -36,7 +36,7 @@ struct TuiMessageChirho {
     body_chirho: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TuiAgentChirho {
     identity_chirho: String,
     alive_chirho: bool,
@@ -108,13 +108,25 @@ fn run_tui_loop_chirho(
     terminal_chirho: &mut Terminal<CrosstermBackend<Stdout>>,
     state_chirho: &mut TuiStateChirho,
 ) -> Result<(), String> {
+    // Idle rooms should cost nothing. We only repaint when a refresh actually
+    // brought new data or an input/resize event arrived; otherwise we just block
+    // in event::poll. That keeps an untouched console near 0% CPU instead of
+    // rebuilding the whole transcript ten times a second on every poll wakeup.
+    let mut needs_render_chirho = true;
     loop {
-        refresh_state_if_due_chirho(state_chirho);
-        terminal_chirho
-            .draw(|frame_chirho| render_tui_chirho(frame_chirho, state_chirho))
-            .map_err(|err_chirho| err_chirho.to_string())?;
+        if refresh_state_if_due_chirho(state_chirho) {
+            needs_render_chirho = true;
+        }
+        if needs_render_chirho {
+            terminal_chirho
+                .draw(|frame_chirho| render_tui_chirho(frame_chirho, state_chirho))
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            needs_render_chirho = false;
+        }
         if event::poll(Duration::from_millis(100)).map_err(|err_chirho| err_chirho.to_string())? {
             let event_chirho = event::read().map_err(|err_chirho| err_chirho.to_string())?;
+            // Any key, resize, or focus event can change what we show; repaint next tick.
+            needs_render_chirho = true;
             if handle_event_chirho(state_chirho, event_chirho)? {
                 break;
             }
@@ -123,20 +135,34 @@ fn run_tui_loop_chirho(
     Ok(())
 }
 
-fn refresh_state_if_due_chirho(state_chirho: &mut TuiStateChirho) {
+/// Refreshes room state when the interval is due and reports whether anything
+/// the operator can see actually changed, so the caller can skip a repaint when
+/// nothing did.
+fn refresh_state_if_due_chirho(state_chirho: &mut TuiStateChirho) -> bool {
     if state_chirho.last_refresh_chirho.elapsed() < REFRESH_INTERVAL_CHIRHO {
-        return;
+        return false;
     }
-    if let Err(err_chirho) = fetch_messages_chirho(state_chirho) {
-        state_chirho.status_chirho = format!("message refresh failed: {err_chirho}");
+    let mut changed_chirho = false;
+    match fetch_messages_chirho(state_chirho) {
+        Ok(added_chirho) => changed_chirho |= added_chirho,
+        Err(err_chirho) => {
+            state_chirho.status_chirho = format!("message refresh failed: {err_chirho}");
+            changed_chirho = true;
+        }
     }
-    if let Err(err_chirho) = fetch_agents_chirho(state_chirho) {
-        state_chirho.status_chirho = format!("agent refresh failed: {err_chirho}");
+    match fetch_agents_chirho(state_chirho) {
+        Ok(agents_changed_chirho) => changed_chirho |= agents_changed_chirho,
+        Err(err_chirho) => {
+            state_chirho.status_chirho = format!("agent refresh failed: {err_chirho}");
+            changed_chirho = true;
+        }
     }
     state_chirho.last_refresh_chirho = Instant::now();
+    changed_chirho
 }
 
-fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String> {
+/// Returns `true` when at least one new message was appended to the transcript.
+fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
     let path_chirho = format!(
         "/v1/messages_chirho?room_chirho={}&after_chirho={}",
         percent_encode_chirho(&state_chirho.room_chirho),
@@ -148,6 +174,9 @@ fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String
         .get("messages_chirho")
         .and_then(Value::as_array)
         .ok_or_else(|| "messages_chirho missing".to_string())?;
+    // The server only returns rows past `after_chirho`, so a non-empty batch is
+    // exactly "new content the operator hasn't seen".
+    let appended_chirho = !messages_chirho.is_empty();
     for message_chirho in messages_chirho {
         let id_chirho = message_chirho
             .get("id_chirho")
@@ -182,10 +211,11 @@ fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String
         let drop_count_chirho = state_chirho.messages_chirho.len() - MAX_MESSAGES_CHIRHO;
         state_chirho.messages_chirho.drain(0..drop_count_chirho);
     }
-    Ok(())
+    Ok(appended_chirho)
 }
 
-fn fetch_agents_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String> {
+/// Returns `true` when the roster differs from what is already on screen.
+fn fetch_agents_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
     let path_chirho = format!(
         "/v1/agents_chirho?room_chirho={}",
         percent_encode_chirho(&state_chirho.room_chirho)
@@ -196,8 +226,10 @@ fn fetch_agents_chirho(state_chirho: &mut TuiStateChirho) -> Result<(), String> 
         .get("agents_chirho")
         .and_then(Value::as_array)
         .ok_or_else(|| "agents_chirho missing".to_string())?;
-    state_chirho.agents_chirho = agents_chirho.iter().map(parse_agent_chirho).collect();
-    Ok(())
+    let parsed_chirho: Vec<TuiAgentChirho> = agents_chirho.iter().map(parse_agent_chirho).collect();
+    let changed_chirho = parsed_chirho != state_chirho.agents_chirho;
+    state_chirho.agents_chirho = parsed_chirho;
+    Ok(changed_chirho)
 }
 
 fn parse_agent_chirho(value_chirho: &Value) -> TuiAgentChirho {
