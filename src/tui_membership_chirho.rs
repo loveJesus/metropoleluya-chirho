@@ -19,6 +19,8 @@ use serde_json::{json, Value};
 use std::time::Instant;
 
 pub(crate) const ADD_BUTTON_LABEL_CHIRHO: &str = "[ + add ]";
+pub(crate) const MENU_GLYPH_LABEL_CHIRHO: &str = "[☰]";
+const MENU_GLYPH_WIDTH_CHIRHO: u16 = 3;
 const CONTEXT_MENU_ITEMS_CHIRHO: [&str; 2] = ["Remove from room", "Cancel"];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +129,28 @@ pub(crate) fn agent_index_at_chirho(
         .find(|hit_chirho| {
             row_chirho >= hit_chirho.row_start_chirho && row_chirho <= hit_chirho.row_end_chirho
         })
+        .map(|hit_chirho| hit_chirho.agent_index_chirho)
+}
+
+/// Maps a left-click on the `[☰]` cells at the start of a listener's identity
+/// row to that listener. This is the mouse path that works everywhere: many
+/// terminals and tmux's own menus swallow right-click before it reaches the
+/// application, so the glyph is the reliable affordance.
+pub(crate) fn menu_glyph_index_at_chirho(
+    hits_chirho: &MembershipHitsChirho,
+    column_chirho: u16,
+    row_chirho: u16,
+) -> Option<usize> {
+    let listeners_rect_chirho = hits_chirho.listeners_rect_chirho?;
+    let glyph_start_chirho = listeners_rect_chirho.x.saturating_add(1);
+    let glyph_end_chirho = glyph_start_chirho.saturating_add(MENU_GLYPH_WIDTH_CHIRHO - 1);
+    if column_chirho < glyph_start_chirho || column_chirho > glyph_end_chirho {
+        return None;
+    }
+    hits_chirho
+        .agent_rows_chirho
+        .iter()
+        .find(|hit_chirho| hit_chirho.row_start_chirho == row_chirho)
         .map(|hit_chirho| hit_chirho.agent_index_chirho)
 }
 
@@ -325,6 +349,16 @@ pub(crate) fn handle_mouse_event_chirho(
                     row_chirho,
                 ) {
                     open_add_form_chirho(state_chirho);
+                } else if let Some(agent_index_chirho) = menu_glyph_index_at_chirho(
+                    &state_chirho.hits_chirho,
+                    column_chirho,
+                    row_chirho,
+                ) {
+                    state_chirho.selected_agent_chirho = agent_index_chirho;
+                    state_chirho.mode_chirho = TuiModeChirho::ContextMenuChirho {
+                        agent_index_chirho,
+                        selection_chirho: 0,
+                    };
                 } else if let Some(agent_index_chirho) =
                     agent_index_at_chirho(&state_chirho.hits_chirho, column_chirho, row_chirho)
                 {
@@ -889,6 +923,41 @@ mod tests_chirho {
             }
             other_chirho => panic!("expected add form, got {other_chirho:?}"),
         }
+    }
+
+    #[test]
+    fn left_click_menu_glyph_opens_context_menu_chirho() {
+        let mut state_chirho = test_state_chirho();
+        state_chirho.hits_chirho = seeded_hits_chirho();
+        handle_mouse_event_chirho(
+            &mut state_chirho,
+            mouse_down_chirho(MouseButtonChirho::Left, 82, 10),
+        );
+        assert_eq!(
+            state_chirho.mode_chirho,
+            TuiModeChirho::ContextMenuChirho {
+                agent_index_chirho: 1,
+                selection_chirho: 0
+            }
+        );
+        assert_eq!(state_chirho.selected_agent_chirho, 1);
+    }
+
+    #[test]
+    fn left_click_row_body_selects_without_menu_chirho() {
+        let mut state_chirho = test_state_chirho();
+        state_chirho.hits_chirho = seeded_hits_chirho();
+        handle_mouse_event_chirho(
+            &mut state_chirho,
+            mouse_down_chirho(MouseButtonChirho::Left, 90, 10),
+        );
+        assert_eq!(state_chirho.mode_chirho, TuiModeChirho::NormalChirho);
+        assert_eq!(state_chirho.selected_agent_chirho, 1);
+        handle_mouse_event_chirho(
+            &mut state_chirho,
+            mouse_down_chirho(MouseButtonChirho::Left, 82, 11),
+        );
+        assert_eq!(state_chirho.mode_chirho, TuiModeChirho::NormalChirho);
     }
 
     #[test]

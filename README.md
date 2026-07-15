@@ -98,10 +98,10 @@ TUI commands:
 
 TUI room-membership admin (mouse + keyboard):
 
-- Right-click a listener to open its context menu; `Remove from room` always asks for confirmation, then unsubscribes that agent from this room only (other rooms and the registration survive) and nudges their tmux pane.
+- Left-click the `[☰]` glyph next to a listener (or right-click anywhere on its rows) to open its context menu; `Remove from room` always asks for confirmation, then unsubscribes that agent from this room only (other rooms and the registration survive) and nudges their tmux pane.
 - Click `[ + add ]` to open the add form: session + window# + name (`CAIRN_CHIRHO` / `3` / `GPT` becomes `CAIRN_CHIRHO/gpt_chirho` at `CAIRN_CHIRHO:3`). The derived identity/target is previewed before you submit, and the new listener's pane is nudged.
 - Keyboard parity: `Tab` toggles focus between the compose box and the listeners list. With the list focused, `Up`/`Down` select, `Enter` opens the context menu, `x`/`Delete` starts a remove, `a`/`+` opens the add form, and `Esc` returns to the compose box. `Esc` also closes any open popup.
-- Inside tmux, enable mouse pass-through with `set -g mouse on`, or right-clicks will not reach the TUI. Every mouse action also has a keyboard path.
+- Inside tmux, enable mouse pass-through with `set -g mouse on`. Right-click specifically is often swallowed by the terminal emulator or tmux's own menus before it reaches the app — the `[☰]` left-click is the portable path. Every mouse action also has a keyboard path.
 
 ## HTTP API
 

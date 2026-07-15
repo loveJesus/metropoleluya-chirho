@@ -8,6 +8,7 @@ use crate::tui_membership_chirho::{
     handle_listeners_key_chirho, handle_modal_key_chirho, handle_mouse_event_chirho,
     render_membership_overlay_chirho, toggle_focus_chirho, AgentRowHitChirho,
     MembershipHitsChirho, TuiFocusChirho, TuiModeChirho, ADD_BUTTON_LABEL_CHIRHO,
+    MENU_GLYPH_LABEL_CHIRHO,
 };
 use crossterm::event::{
     self, DisableMouseCapture as DisableMouseCaptureChirho,
@@ -650,6 +651,13 @@ fn render_agents_chirho(
             agent_chirho.pane_id_chirho.as_deref().unwrap_or("?")
         );
         lines_chirho.push(Line::from(vec![
+            Span::styled(
+                MENU_GLYPH_LABEL_CHIRHO,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
             Span::styled(&agent_chirho.identity_chirho, identity_style_chirho),
             Span::raw(" "),
             alive_chirho,
@@ -701,7 +709,7 @@ fn render_input_chirho(
                 "commands: /topic name-chirho, /clear, /quit | Tab focuses listeners | PageUp/PageDown/Home/End | Esc/Ctrl-C quit"
             }
             TuiFocusChirho::ListenersChirho => {
-                "listeners: Up/Down select, Enter menu, x/Delete remove, a/+ add | Tab back to compose | right-click a listener, click [ + add ]"
+                "listeners: Up/Down select, Enter menu, x/Delete remove, a/+ add, Esc back | Tab: compose | click [☰] for menu, [ + add ] to add"
             }
         }),
     ];

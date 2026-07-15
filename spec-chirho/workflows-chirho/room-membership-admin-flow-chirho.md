@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    operator_chirho[Operator in Ratatui TUI] -->|right-click listener, or Tab + Enter / x| menu_chirho[Context menu popup]
+    operator_chirho[Operator in Ratatui TUI] -->|left-click its menu glyph / right-click listener, or Tab + Enter / x| menu_chirho[Context menu popup]
     menu_chirho -->|Remove from room| confirm_chirho[Confirm popup - no silent removes]
     confirm_chirho -->|Enter or click yes| remove_http_chirho[HTTP POST /v1/remove_chirho]
     remove_http_chirho --> remove_fn_chirho[remove_agent_chirho]
