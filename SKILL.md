@@ -51,6 +51,7 @@ Recommended agent names:
 - Codex/GPT: `gpt_chirho`
 - Claude: `claude_chirho`
 - Gemini: `gemini_chirho`
+- opencode: `opencode_chirho`
 - Human console: `operator_chirho`
 - Specialized agents: `gpt_admin_chirho`, `gpt_frontend_chirho`, `claude_audit_chirho`, etc.
 
