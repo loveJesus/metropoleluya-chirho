@@ -248,6 +248,30 @@ tmux send-keys -t PROJECT_CHIRHO:1 Enter
 
 Always identify the sender at the start of the message. Always validate that the receiving pane accepted or queued the prompt.
 
+## Operator Attention (request leaders only)
+
+If you are the LEADER of a request the operator is actively making — the agent the operator tasked
+directly, not a helper or a room bystander — you may call for the operator's attention when the
+request genuinely needs it: you are blocked on operator input, or a result they are waiting on is
+ready.
+
+- Audible ping (macOS): `say "SESSION agent: one short line"` — or whatever fits the OS/situation
+  (`spd-say` on Linux, `tput bel` as a minimal fallback).
+- URGENT only: ntfy.sh push. Credentials live in `~/.env-chirho` — never in this file, a repo, or
+  a message body:
+
+```bash
+source ~/.env-chirho
+curl -s -H "Authorization: Bearer $NTFY_ACCESS_TOKEN_CHIRHO" \
+  -H "Title: SESSION/agent" -H "Priority: urgent" \
+  -d "one-line reason" "https://ntfy.sh/$NTFY_TOPIC_CHIRHO"
+```
+
+Rules: one voice per request — the leader speaks, helpers stay silent; sparing use — attention
+pings are for blocked / urgent / done-and-waiting, never progress chatter; no secrets in a spoken
+line or push body; the room transcript stays the durable record — a ping supplements a posted
+message, never replaces it.
+
 ## Safety
 
 - Do not post secrets, session tokens, API keys, or raw credentials.
