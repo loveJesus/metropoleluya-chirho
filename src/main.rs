@@ -1,5 +1,6 @@
 // For God so loved the world, that He gave His only Begotten Son, that whosoever believeth in Him should not perish but have everlasting life. - John 3:16 (KJV)
 
+use jiff::Timestamp;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -95,36 +96,19 @@ fn now_ms_chirho() -> i64 {
         .as_millis() as i64
 }
 
-pub(crate) fn format_timestamp_chirho(at_ms_chirho: i64) -> String {
-    let seconds_chirho = at_ms_chirho.div_euclid(1_000);
-    let millis_chirho = at_ms_chirho.rem_euclid(1_000);
-    let days_chirho = seconds_chirho.div_euclid(86_400);
-    let seconds_of_day_chirho = seconds_chirho.rem_euclid(86_400);
-    let (year_chirho, month_chirho, day_chirho) = civil_from_unix_days_chirho(days_chirho);
-    let hour_chirho = seconds_of_day_chirho / 3_600;
-    let minute_chirho = (seconds_of_day_chirho % 3_600) / 60;
-    let second_chirho = seconds_of_day_chirho % 60;
-    format!(
-        "{year_chirho:04}-{month_chirho:02}-{day_chirho:02} {hour_chirho:02}:{minute_chirho:02}:{second_chirho:02}.{millis_chirho:03}Z"
-    )
-}
+/// America/New_York (US Eastern) IANA zone. Display timestamps are localized
+/// here so operators read wall-clock ET; storage stays epoch UTC.
+const EASTERN_TZ_CHIRHO: &str = "America/New_York";
 
-fn civil_from_unix_days_chirho(days_chirho: i64) -> (i64, u32, u32) {
-    let shifted_days_chirho = days_chirho + 719_468;
-    let era_chirho = shifted_days_chirho.div_euclid(146_097);
-    let day_of_era_chirho = shifted_days_chirho - era_chirho * 146_097;
-    let year_of_era_chirho = (day_of_era_chirho - day_of_era_chirho / 1_460
-        + day_of_era_chirho / 36_524
-        - day_of_era_chirho / 146_096)
-        / 365;
-    let year_chirho = year_of_era_chirho + era_chirho * 400;
-    let day_of_year_chirho = day_of_era_chirho
-        - (365 * year_of_era_chirho + year_of_era_chirho / 4 - year_of_era_chirho / 100);
-    let month_piece_chirho = (5 * day_of_year_chirho + 2) / 153;
-    let day_chirho = day_of_year_chirho - (153 * month_piece_chirho + 2) / 5 + 1;
-    let month_chirho = month_piece_chirho + if month_piece_chirho < 10 { 3 } else { -9 };
-    let adjusted_year_chirho = year_chirho + if month_chirho <= 2 { 1 } else { 0 };
-    (adjusted_year_chirho, month_chirho as u32, day_chirho as u32)
+/// Formats an epoch-millisecond instant as America/New_York wall-clock text,
+/// e.g. "2026-07-17 15:25:02.661 EDT". DST-correct via jiff's tz database (the
+/// zone abbreviation flips EST/EDT with the season). Storage stays epoch UTC in
+/// `at_ms_chirho`; only display is localized.
+pub(crate) fn format_timestamp_chirho(at_ms_chirho: i64) -> String {
+    Timestamp::from_millisecond(at_ms_chirho)
+        .and_then(|instant_chirho| instant_chirho.in_tz(EASTERN_TZ_CHIRHO))
+        .map(|zoned_chirho| zoned_chirho.strftime("%Y-%m-%d %H:%M:%S.%3f %Z").to_string())
+        .unwrap_or_else(|_| format!("{at_ms_chirho}ms-epoch"))
 }
 
 fn default_db_path_chirho() -> PathBuf {
@@ -211,6 +195,10 @@ fn init_db_chirho(conn_chirho: &Connection) -> Result<(), String> {
                 error_chirho text,
                 at_ms_chirho integer not null
             );
+            -- at_text_chirho here is canonical UTC (Z-suffixed) for raw DB
+            -- inspection; the API/TUI display path localizes to America/New_York
+            -- via format_timestamp_chirho. These views stay UTC so they remain
+            -- hermetic across machine time zones.
             create view if not exists messages_with_time_chirho as
                 select
                     id_chirho,

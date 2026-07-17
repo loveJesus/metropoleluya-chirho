@@ -21,11 +21,19 @@ fn percent_encoding_round_trips_room_names_chirho() {
 }
 
 #[test]
-fn timestamp_formatter_uses_utc_text_chirho() {
-    assert_eq!(format_timestamp_chirho(0), "1970-01-01 00:00:00.000Z");
+fn timestamp_formatter_uses_eastern_text_chirho() {
+    // Storage is epoch UTC; display localizes to America/New_York (DST-correct).
+    // Epoch 0 = 1970-01-01T00:00Z, which is EST (UTC-5) in New York.
+    assert_eq!(format_timestamp_chirho(0), "1969-12-31 19:00:00.000 EST");
+    // Winter instant -> EST (-5).
     assert_eq!(
         format_timestamp_chirho(1_704_067_200_123),
-        "2024-01-01 00:00:00.123Z"
+        "2023-12-31 19:00:00.123 EST"
+    );
+    // Summer instant -> EDT (-4): proves DST handling, not a hard-coded offset.
+    assert_eq!(
+        format_timestamp_chirho(1_719_792_000_000),
+        "2024-06-30 20:00:00.000 EDT"
     );
 }
 
@@ -84,11 +92,13 @@ fn sqlite_messages_view_exposes_readable_timestamp_chirho() {
             |row_chirho| row_chirho.get(0),
         )
         .unwrap();
+    // The SQL view keeps canonical UTC (Z-suffixed) for raw DB inspection.
     assert_eq!(at_text_chirho, "2024-01-01 00:00:00.123Z");
+    // The API/TUI display path localizes the same instant to America/New_York.
     let listed_chirho = list_messages_chirho(&conn_chirho, "project-chirho", 0).unwrap();
     assert_eq!(
         listed_chirho["messages_chirho"][0]["at_text_chirho"],
-        "2024-01-01 00:00:00.123Z"
+        "2023-12-31 19:00:00.123 EST"
     );
 }
 

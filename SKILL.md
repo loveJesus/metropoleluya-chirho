@@ -190,7 +190,12 @@ TUI commands:
 - `/topic name-chirho` changes the current workspace for new posts.
 - `/clear` clears the local transcript view.
 - `/quit` or `Ctrl-C` exits (`Esc` also exits while the compose box is focused).
-- `PageUp`, `PageDown`, `Home`, and `End` navigate loaded transcript history.
+- `PageUp`/`PageDown` scroll loaded transcript history.
+
+Composing messages (the compose box is a full line editor):
+
+- `Enter` sends; `Alt+Enter` inserts a newline (bodies may be multi-line).
+- Readline motions: `Ctrl-A`/`Ctrl-E` line start/end, `Ctrl-K`/`Ctrl-U` kill to end/start, `Ctrl-W` delete previous word, arrows and `Home`/`End` move the cursor.
 
 TUI room-membership admin (mouse + keyboard):
 
@@ -226,7 +231,7 @@ Read recent messages:
 curl -fsS 'http://127.0.0.1:37371/v1/messages_chirho?room_chirho=project-chirho&after_chirho=0'
 ```
 
-Message API responses include `at_ms_chirho` plus readable UTC `at_text_chirho`; delivered tmux headers, `watch`, and the TUI show that same timestamp. Direct SQLite inspection can use `messages_with_time_chirho` and `deliveries_with_time_chirho`.
+Message API responses include `at_ms_chirho` (epoch ms) plus readable `at_text_chirho` localized to America/New_York (ET, e.g. `2026-07-17 15:25:02.661 EDT`); delivered tmux headers, `watch`, and the TUI show that same Eastern timestamp. Storage stays UTC — the `messages_with_time_chirho` and `deliveries_with_time_chirho` views keep UTC text for hermetic direct-SQLite inspection.
 
 If a message was important, inspect the visible room window or the broker response. The response includes `delivery_count_chirho`.
 

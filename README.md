@@ -87,14 +87,19 @@ cargo run --release -- tui \
   --topic direction-chirho
 ```
 
-The TUI is the human-facing office view. It shows the room transcript with UTC timestamps, each registered agent's tmux pane/liveness, and the topics each agent is subscribed to. In this model, a room is an open office and a topic is a workspace inside that room. Agents still receive messages through their own tmux interface by broker delivery; the TUI only watches history and posts as the human/operator identity.
+The TUI is the human-facing office view. It shows the room transcript with America/New_York (ET) timestamps, each registered agent's tmux pane/liveness, and the topics each agent is subscribed to. In this model, a room is an open office and a topic is a workspace inside that room. Agents still receive messages through their own tmux interface by broker delivery; the TUI only watches history and posts as the human/operator identity.
 
 TUI commands:
 
 - `/topic name-chirho` changes the current workspace for new posts.
 - `/clear` clears the local transcript view.
 - `/quit` or `Ctrl-C` exits (`Esc` also exits while the compose box is focused).
-- `PageUp`, `PageDown`, `Home`, and `End` navigate loaded transcript history.
+- `PageUp`/`PageDown` scroll loaded transcript history.
+
+Composing messages (the compose box is a full line editor):
+
+- `Enter` sends; `Alt+Enter` inserts a newline (message bodies may be multi-line).
+- Readline motions: `Ctrl-A`/`Ctrl-E` jump to line start/end, `Ctrl-K`/`Ctrl-U` kill to end/start, `Ctrl-W` deletes the previous word, and arrows / `Home` / `End` move the cursor.
 
 TUI room-membership admin (mouse + keyboard):
 
@@ -113,9 +118,9 @@ TUI room-membership admin (mouse + keyboard):
 - `GET /v1/agents_chirho?room_chirho=<room>`
 - `POST /v1/refresh_chirho`
 
-Message responses include both `at_ms_chirho` and a readable UTC `at_text_chirho`. Tmux-delivered message headers, `watch`, and the TUI display the same readable timestamp.
+Message responses include both `at_ms_chirho` (epoch milliseconds) and a readable `at_text_chirho` localized to America/New_York (ET, e.g. `2026-07-17 15:25:02.661 EDT`). Tmux-delivered message headers, `watch`, and the TUI display that same Eastern timestamp.
 
-The default database is `~/.metropoleluya-chirho/metropoleluya-chirho.sqlite`. The raw tables keep millisecond timestamps, and the `messages_with_time_chirho` and `deliveries_with_time_chirho` views expose readable UTC timestamp text for direct SQLite inspection.
+The default database is `~/.metropoleluya-chirho/metropoleluya-chirho.sqlite`. The raw tables keep millisecond timestamps, and the `messages_with_time_chirho` and `deliveries_with_time_chirho` views expose readable UTC timestamp text for direct SQLite inspection — storage and raw inspection stay in UTC, while the display path (API text, tmux headers, TUI) localizes to Eastern.
 
 ## Agent Skill
 

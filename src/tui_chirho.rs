@@ -28,6 +28,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use ratatui_textarea::TextArea;
 use serde_json::{json, Value};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
@@ -60,7 +61,7 @@ pub(crate) struct TuiStateChirho {
     pub(crate) agent_chirho: String,
     pub(crate) room_chirho: String,
     pub(crate) topic_chirho: String,
-    pub(crate) input_chirho: String,
+    pub(crate) input_area_chirho: TextArea<'static>,
     pub(crate) scroll_offset_chirho: usize,
     pub(crate) status_chirho: String,
     pub(crate) after_chirho: i64,
@@ -89,7 +90,7 @@ impl TuiStateChirho {
             agent_chirho,
             room_chirho,
             topic_chirho,
-            input_chirho: String::new(),
+            input_area_chirho: new_compose_area_chirho(),
             scroll_offset_chirho: 0,
             status_chirho: "starting room console".to_string(),
             after_chirho,
@@ -355,13 +356,14 @@ fn handle_key_event_chirho(
         handle_listeners_key_chirho(state_chirho, key_chirho);
         return Ok(false);
     }
+    // Alt+Enter inserts a newline (broker bodies may be multi-line); a bare
+    // Enter sends. PageUp/PageDown stay on transcript scrollback; every other
+    // key flows into the editor, which owns readline motions (Ctrl-A/E/K/U/W,
+    // arrows, Home/End, word ops). Part of the compose-editor flow in
+    // spec-chirho/workflows-chirho/tui-console-flow-chirho.md.
     match key_chirho.code {
-        KeyCodeChirho::Char(value_chirho) => {
-            state_chirho.input_chirho.push(value_chirho);
-            Ok(false)
-        }
-        KeyCodeChirho::Backspace => {
-            state_chirho.input_chirho.pop();
+        KeyCodeChirho::Enter if key_chirho.modifiers.contains(KeyModifiersChirho::ALT) => {
+            state_chirho.input_area_chirho.input(key_chirho);
             Ok(false)
         }
         KeyCodeChirho::Enter => submit_input_chirho(state_chirho),
@@ -377,24 +379,17 @@ fn handle_key_event_chirho(
             state_chirho.status_chirho = "scrollback: newer messages".to_string();
             Ok(false)
         }
-        KeyCodeChirho::Home => {
-            state_chirho.scroll_offset_chirho = usize::MAX / 4;
-            state_chirho.status_chirho = "scrollback: oldest loaded messages".to_string();
-            Ok(false)
-        }
-        KeyCodeChirho::End => {
-            state_chirho.scroll_offset_chirho = 0;
-            state_chirho.status_chirho = "scrollback: live tail".to_string();
-            Ok(false)
-        }
         KeyCodeChirho::Esc => Ok(true),
-        _ => Ok(false),
+        _ => {
+            state_chirho.input_area_chirho.input(key_chirho);
+            Ok(false)
+        }
     }
 }
 
 fn submit_input_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
-    let input_chirho = state_chirho.input_chirho.trim().to_string();
-    state_chirho.input_chirho.clear();
+    let input_chirho = state_chirho.input_area_chirho.lines().join("\n").trim().to_string();
+    state_chirho.input_area_chirho = new_compose_area_chirho();
     if input_chirho.is_empty() {
         return Ok(false);
     }
@@ -463,7 +458,7 @@ fn render_tui_chirho(frame_chirho: &mut Frame<'_>, state_chirho: &mut TuiStateCh
         .constraints([
             Constraint::Length(3),
             Constraint::Min(8),
-            Constraint::Length(5),
+            Constraint::Length(6),
         ])
         .split(area_chirho);
     render_header_chirho(frame_chirho, root_chunks_chirho[0], state_chirho);
@@ -690,38 +685,75 @@ fn render_agents_chirho(
     frame_chirho.render_widget(agents_chirho, area_chirho);
 }
 
+/// Builds the empty compose editor: a block cursor, no cursor-line underline,
+/// and a hint placeholder. Reused for the initial state and after each send so
+/// styling stays consistent. Part of the compose-editor flow in
+/// spec-chirho/workflows-chirho/tui-console-flow-chirho.md.
+fn new_compose_area_chirho() -> TextArea<'static> {
+    let mut area_chirho = TextArea::default();
+    area_chirho.set_placeholder_text("type a message — Enter sends, Alt+Enter for a newline");
+    area_chirho.set_cursor_line_style(Style::default());
+    area_chirho.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+    area_chirho
+}
+
+/// Bottom pane: a status line, the multi-line compose editor (its own widget so
+/// it can show a cursor and readline motions), and a focus-aware help line.
 fn render_input_chirho(
     frame_chirho: &mut Frame<'_>,
     area_chirho: Rect,
     state_chirho: &TuiStateChirho,
 ) {
-    let input_chirho = vec![
-        Line::from(vec![
-            Span::styled("status: ", Style::default().fg(Color::Yellow)),
-            Span::raw(&state_chirho.status_chirho),
-        ]),
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Green)),
-            Span::raw(&state_chirho.input_chirho),
-        ]),
-        Line::from(match state_chirho.focus_chirho {
-            TuiFocusChirho::ComposeChirho => {
-                "commands: /topic name-chirho, /clear, /quit | Tab focuses listeners | PageUp/PageDown/Home/End | Esc/Ctrl-C quit"
-            }
-            TuiFocusChirho::ListenersChirho => {
-                "listeners: Up/Down select, Enter menu, x/Delete remove, a/+ add, Esc back | Tab: compose | click [☰] for menu, [ + add ] to add"
-            }
-        }),
-    ];
-    let block_chirho = Paragraph::new(input_chirho)
-        .block(Block::default().borders(Borders::ALL).title("speak-chirho"))
-        .wrap(Wrap { trim: false });
+    let block_chirho = Block::default().borders(Borders::ALL).title("speak-chirho");
+    let inner_chirho = block_chirho.inner(area_chirho);
     frame_chirho.render_widget(block_chirho, area_chirho);
+    let rows_chirho = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner_chirho);
+    let status_chirho = Paragraph::new(Line::from(vec![
+        Span::styled("status: ", Style::default().fg(Color::Yellow)),
+        Span::raw(&state_chirho.status_chirho),
+    ]))
+    .wrap(Wrap { trim: true });
+    frame_chirho.render_widget(status_chirho, rows_chirho[0]);
+    frame_chirho.render_widget(&state_chirho.input_area_chirho, rows_chirho[1]);
+    let help_chirho = match state_chirho.focus_chirho {
+        TuiFocusChirho::ComposeChirho => {
+            "Enter send · Alt+Enter newline · Ctrl-A/E/K/U/W + arrows edit · PgUp/PgDn scroll · Tab→listeners · /topic /clear /quit · Esc quit"
+        }
+        TuiFocusChirho::ListenersChirho => {
+            "listeners: Up/Down select, Enter menu, x/Delete remove, a/+ add, Esc back | Tab: compose | click [☰] for menu, [ + add ] to add"
+        }
+    };
+    frame_chirho.render_widget(
+        Paragraph::new(Line::from(help_chirho)).wrap(Wrap { trim: true }),
+        rows_chirho[2],
+    );
 }
 
 #[cfg(test)]
 mod tests_chirho {
     use super::*;
+
+    #[test]
+    fn compose_area_collects_and_clears_text_chirho() {
+        let mut area_chirho = new_compose_area_chirho();
+        for char_chirho in "hello".chars() {
+            area_chirho.input(KeyEventChirho::new(
+                KeyCodeChirho::Char(char_chirho),
+                KeyModifiersChirho::empty(),
+            ));
+        }
+        assert_eq!(area_chirho.lines().join("\n"), "hello");
+        // A fresh area (as after a send) is empty again.
+        area_chirho = new_compose_area_chirho();
+        assert_eq!(area_chirho.lines().join("\n"), "");
+    }
 
     #[test]
     fn parse_agent_handles_missing_topics_chirho() {
