@@ -13,6 +13,12 @@ fn bind_listener_binds_and_rebinds_chirho() {
 }
 
 #[test]
+fn deliver_parallel_handles_empty_targets_chirho() {
+    // No subscribers -> no work, no panic, no threads spawned.
+    assert!(deliver_parallel_chirho(&[], "body-chirho").is_empty());
+}
+
+#[test]
 fn identity_uses_session_slash_agent_chirho() {
     assert_eq!(
         identity_chirho("PROJECT_CHIRHO", "gpt_chirho"),

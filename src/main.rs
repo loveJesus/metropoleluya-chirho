@@ -371,6 +371,74 @@ fn remove_agent_chirho(
     }))
 }
 
+/// Outcome of one delivery attempt, produced off-thread (tmux I/O only) so the
+/// caller can persist results and prune afterward with the DB handle.
+struct DeliveryOutcomeChirho {
+    alive_chirho: bool,
+    delivered_chirho: bool,
+    error_chirho: Option<String>,
+}
+
+fn deliver_one_chirho(tmux_target_chirho: &str, text_chirho: &str) -> DeliveryOutcomeChirho {
+    let probe_chirho = probe_tmux_target_chirho(tmux_target_chirho);
+    if !probe_chirho.alive_chirho {
+        return DeliveryOutcomeChirho {
+            alive_chirho: false,
+            delivered_chirho: false,
+            error_chirho: Some(
+                probe_chirho
+                    .error_chirho
+                    .unwrap_or_else(|| "tmux target is not alive".to_string()),
+            ),
+        };
+    }
+    match send_tmux_message_chirho(tmux_target_chirho, text_chirho) {
+        Ok(()) => DeliveryOutcomeChirho {
+            alive_chirho: true,
+            delivered_chirho: true,
+            error_chirho: None,
+        },
+        Err(err_chirho) => DeliveryOutcomeChirho {
+            alive_chirho: true,
+            delivered_chirho: false,
+            error_chirho: Some(err_chirho),
+        },
+    }
+}
+
+/// Delivers to every target with bounded concurrency, so a post's wall-clock is
+/// roughly one delivery's settle delay regardless of subscriber count (instead
+/// of the sum). tmux I/O only — no DB handle crosses a thread boundary.
+fn deliver_parallel_chirho(
+    targets_chirho: &[AgentTargetChirho],
+    text_chirho: &str,
+) -> Vec<DeliveryOutcomeChirho> {
+    const MAX_DELIVERY_CONCURRENCY_CHIRHO: usize = 16;
+    let mut outcomes_chirho = Vec::with_capacity(targets_chirho.len());
+    for chunk_chirho in targets_chirho.chunks(MAX_DELIVERY_CONCURRENCY_CHIRHO) {
+        let chunk_outcomes_chirho: Vec<DeliveryOutcomeChirho> = thread::scope(|scope_chirho| {
+            chunk_chirho
+                .iter()
+                .map(|target_chirho| {
+                    scope_chirho
+                        .spawn(|| deliver_one_chirho(&target_chirho.tmux_target_chirho, text_chirho))
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle_chirho| {
+                    handle_chirho.join().unwrap_or(DeliveryOutcomeChirho {
+                        alive_chirho: false,
+                        delivered_chirho: false,
+                        error_chirho: Some("delivery thread panicked".to_string()),
+                    })
+                })
+                .collect()
+        });
+        outcomes_chirho.extend(chunk_outcomes_chirho);
+    }
+    outcomes_chirho
+}
+
 fn post_message_chirho(
     conn_chirho: &mut Connection,
     request_chirho: PostRequestChirho,
@@ -410,27 +478,19 @@ fn post_message_chirho(
 
     let targets_chirho =
         resolve_targets_chirho(conn_chirho, &request_chirho, &from_identity_chirho)?;
+    let text_chirho = format_delivery_chirho(
+        message_id_chirho,
+        message_at_ms_chirho,
+        &from_identity_chirho,
+        &request_chirho.room_chirho,
+        &request_chirho.topic_chirho,
+        &request_chirho.body_chirho,
+    );
+    let outcomes_chirho = deliver_parallel_chirho(&targets_chirho, &text_chirho);
+    let recorded_at_ms_chirho = now_ms_chirho();
     let mut delivered_count_chirho = 0usize;
-    for target_chirho in targets_chirho {
-        let text_chirho = format_delivery_chirho(
-            message_id_chirho,
-            message_at_ms_chirho,
-            &from_identity_chirho,
-            &request_chirho.room_chirho,
-            &request_chirho.topic_chirho,
-            &request_chirho.body_chirho,
-        );
-        let probe_chirho = probe_tmux_target_chirho(&target_chirho.tmux_target_chirho);
-        let result_chirho = if probe_chirho.alive_chirho {
-            send_tmux_message_chirho(&target_chirho.tmux_target_chirho, &text_chirho)
-        } else {
-            Err(probe_chirho
-                .error_chirho
-                .clone()
-                .unwrap_or_else(|| "tmux target is not alive".to_string()))
-        };
-        let delivered_chirho = result_chirho.is_ok();
-        if delivered_chirho {
+    for (target_chirho, outcome_chirho) in targets_chirho.iter().zip(outcomes_chirho.iter()) {
+        if outcome_chirho.delivered_chirho {
             delivered_count_chirho += 1;
         }
         conn_chirho
@@ -445,13 +505,31 @@ fn post_message_chirho(
                     message_id_chirho,
                     target_chirho.identity_chirho,
                     target_chirho.tmux_target_chirho,
-                    if probe_chirho.alive_chirho { 1 } else { 0 },
-                    if delivered_chirho { 1 } else { 0 },
-                    result_chirho.err(),
-                    now_ms_chirho()
+                    if outcome_chirho.alive_chirho { 1 } else { 0 },
+                    if outcome_chirho.delivered_chirho { 1 } else { 0 },
+                    outcome_chirho.error_chirho.clone(),
+                    recorded_at_ms_chirho
                 ],
             )
             .map_err(|err_chirho| err_chirho.to_string())?;
+        // Prune stale routing: a dead target's subscription in this room is
+        // deactivated so later posts skip it (self-heals — the agent's next
+        // register reactivates it, and humans watch by polling, not delivery).
+        if !outcome_chirho.alive_chirho {
+            conn_chirho
+                .execute(
+                    "update subscriptions_chirho set active_chirho = 0 \
+                     where identity_chirho = ?1 and room_chirho = ?2",
+                    params![target_chirho.identity_chirho, request_chirho.room_chirho],
+                )
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            conn_chirho
+                .execute(
+                    "update agents_chirho set alive_chirho = 0 where identity_chirho = ?1",
+                    params![target_chirho.identity_chirho],
+                )
+                .map_err(|err_chirho| err_chirho.to_string())?;
+        }
     }
 
     Ok(json!({
