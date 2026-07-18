@@ -4,11 +4,12 @@ use jiff::Timestamp;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -790,9 +791,30 @@ fn run_tmux_chirho(args_chirho: &[&str]) -> Result<(), String> {
     }
 }
 
+/// Builds the broker's listening socket with SO_REUSEADDR set, so a freshly
+/// launched broker can rebind (e.g. 127.0.0.1:37371) immediately over sockets
+/// the previous process left in TIME_WAIT — clean restarts instead of a
+/// ~minute "address already in use" stall while the fleet has no broker.
+fn bind_listener_chirho(bind_chirho: &str) -> Result<TcpListener, String> {
+    let addr_chirho: SocketAddr = bind_chirho
+        .parse()
+        .map_err(|err_chirho: std::net::AddrParseError| err_chirho.to_string())?;
+    let socket_chirho = Socket::new(Domain::for_address(addr_chirho), Type::STREAM, Some(Protocol::TCP))
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    socket_chirho
+        .set_reuse_address(true)
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    socket_chirho
+        .bind(&addr_chirho.into())
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    socket_chirho
+        .listen(128)
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    Ok(socket_chirho.into())
+}
+
 fn run_server_chirho(bind_chirho: &str, db_path_chirho: Option<PathBuf>) -> Result<(), String> {
-    let listener_chirho =
-        TcpListener::bind(bind_chirho).map_err(|err_chirho| err_chirho.to_string())?;
+    let listener_chirho = bind_listener_chirho(bind_chirho)?;
     println!("metropoleluya-chirho listening on http://{bind_chirho}");
     for stream_chirho in listener_chirho.incoming() {
         match stream_chirho {

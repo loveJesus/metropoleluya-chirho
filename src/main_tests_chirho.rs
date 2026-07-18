@@ -3,6 +3,16 @@
 use super::*;
 
 #[test]
+fn bind_listener_binds_and_rebinds_chirho() {
+    // socket2 path binds an ephemeral port and, after drop, rebinds the same
+    // port — the mechanic SO_REUSEADDR guarantees across a broker restart.
+    let listener_chirho = bind_listener_chirho("127.0.0.1:0").unwrap();
+    let addr_chirho = listener_chirho.local_addr().unwrap();
+    drop(listener_chirho);
+    assert!(bind_listener_chirho(&addr_chirho.to_string()).is_ok());
+}
+
+#[test]
 fn identity_uses_session_slash_agent_chirho() {
     assert_eq!(
         identity_chirho("PROJECT_CHIRHO", "gpt_chirho"),
