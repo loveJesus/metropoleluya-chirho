@@ -19,6 +19,34 @@ fn deliver_parallel_handles_empty_targets_chirho() {
 }
 
 #[test]
+fn supervisor_backs_off_then_gives_up_chirho() {
+    let mut crashes_chirho = 0u32;
+    // Rapid crashes (ran < 10s) grow the backoff: 2s, 4s, 8s, 16s...
+    for expected_secs_chirho in [2u64, 4, 8, 16] {
+        assert_eq!(
+            next_supervisor_action_chirho(Duration::from_secs(1), &mut crashes_chirho),
+            SupervisorActionChirho::RestartAfterChirho(Duration::from_secs(expected_secs_chirho))
+        );
+    }
+    // ...then give up rather than restart-bomb.
+    assert_eq!(
+        next_supervisor_action_chirho(Duration::from_secs(1), &mut crashes_chirho),
+        SupervisorActionChirho::GiveUpChirho
+    );
+}
+
+#[test]
+fn supervisor_resets_after_healthy_run_chirho() {
+    let mut crashes_chirho = 4u32; // on the brink of giving up
+    // A healthy run (>= 10s) clears the counter and restarts promptly.
+    assert_eq!(
+        next_supervisor_action_chirho(Duration::from_secs(30), &mut crashes_chirho),
+        SupervisorActionChirho::RestartAfterChirho(Duration::from_secs(1))
+    );
+    assert_eq!(crashes_chirho, 0);
+}
+
+#[test]
 fn identity_uses_session_slash_agent_chirho() {
     assert_eq!(
         identity_chirho("PROJECT_CHIRHO", "gpt_chirho"),

@@ -79,7 +79,7 @@ If it is running, use the broker. If it is not running and the user explicitly a
 
 ```bash
 tmux new-window -t <SESSION_CHIRHO> -n Metropoleluya \
-  'cd /path/to/metropoleluya-chirho && cargo run --release -- server --bind 127.0.0.1:37371'
+  'cd /path/to/metropoleluya-chirho && cargo run --release -- supervise --bind 127.0.0.1:37371'
 ```
 
 If the broker is unavailable and the user did not ask to start it, use the direct-tmux fallback and mention that the broker was unavailable.

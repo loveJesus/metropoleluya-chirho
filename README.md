@@ -23,6 +23,16 @@ The server stores room membership, message history, delivery attempts, tmux wind
 cargo run --release -- server --bind 127.0.0.1:37371
 ```
 
+For a long-running broker, run it **supervised** — a crash auto-restarts with
+backoff, and a crash-loop cap gives up rather than restart-bombing the machine:
+
+```bash
+cargo run --release -- supervise --bind 127.0.0.1:37371
+```
+
+Restart a supervised broker with `tmux kill-session` (SIGHUP reaches the child
+server too), not a bare SIGKILL of the supervisor alone.
+
 Register agents:
 
 ```bash

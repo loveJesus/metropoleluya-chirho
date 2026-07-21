@@ -13,7 +13,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod tui_chirho;
 mod tui_membership_chirho;
@@ -869,6 +869,77 @@ fn run_tmux_chirho(args_chirho: &[&str]) -> Result<(), String> {
     }
 }
 
+/// What the supervisor does after the broker process exits: wait then restart,
+/// or give up. The give-up cap is the guard against a "restart bomb" — a broker
+/// that dies instantly on every start is never relaunched forever.
+#[derive(Debug, PartialEq)]
+enum SupervisorActionChirho {
+    RestartAfterChirho(Duration),
+    GiveUpChirho,
+}
+
+/// Decides the next supervisor step from how long the broker ran. A run of at
+/// least MIN_HEALTHY_RUN_CHIRHO resets the rapid-crash counter (it was healthy,
+/// just exited); shorter runs are rapid crashes that grow the backoff. After
+/// MAX_RAPID_CRASHES_CHIRHO in a row we give up instead of spinning the CPU.
+fn next_supervisor_action_chirho(
+    ran_chirho: Duration,
+    rapid_crashes_chirho: &mut u32,
+) -> SupervisorActionChirho {
+    const MIN_HEALTHY_RUN_CHIRHO: Duration = Duration::from_secs(10);
+    const MAX_RAPID_CRASHES_CHIRHO: u32 = 5;
+    const BACKOFF_CAP_CHIRHO: Duration = Duration::from_secs(30);
+    if ran_chirho >= MIN_HEALTHY_RUN_CHIRHO {
+        *rapid_crashes_chirho = 0;
+    } else {
+        *rapid_crashes_chirho = rapid_crashes_chirho.saturating_add(1);
+    }
+    if *rapid_crashes_chirho >= MAX_RAPID_CRASHES_CHIRHO {
+        return SupervisorActionChirho::GiveUpChirho;
+    }
+    let backoff_secs_chirho = 1u64 << (*rapid_crashes_chirho).min(5);
+    SupervisorActionChirho::RestartAfterChirho(
+        Duration::from_secs(backoff_secs_chirho).min(BACKOFF_CAP_CHIRHO),
+    )
+}
+
+/// Runs the broker under supervision: (re)spawns `server` as a child and, on
+/// exit, backs off and restarts — with the crash-loop cap above so a broker
+/// that cannot start never becomes a CPU-pegging restart bomb. Restart a
+/// supervised broker with `tmux kill-session` (SIGHUP reaches the child too),
+/// not a hard SIGKILL of the supervisor alone.
+fn run_supervisor_chirho(bind_chirho: &str, db_path_chirho: Option<PathBuf>) -> Result<(), String> {
+    let exe_chirho = env::current_exe().map_err(|err_chirho| err_chirho.to_string())?;
+    let mut rapid_crashes_chirho = 0u32;
+    println!("metropoleluya-chirho supervising broker on {bind_chirho}");
+    loop {
+        let started_chirho = Instant::now();
+        let mut command_chirho = Command::new(&exe_chirho);
+        command_chirho.arg("server").arg("--bind").arg(bind_chirho);
+        if let Some(path_chirho) = &db_path_chirho {
+            command_chirho.arg("--db").arg(path_chirho);
+        }
+        match command_chirho.status() {
+            Ok(status_chirho) => eprintln!(
+                "broker exited ({status_chirho}) after {:?}",
+                started_chirho.elapsed()
+            ),
+            Err(err_chirho) => eprintln!("broker failed to start: {err_chirho}"),
+        }
+        match next_supervisor_action_chirho(started_chirho.elapsed(), &mut rapid_crashes_chirho) {
+            SupervisorActionChirho::GiveUpChirho => {
+                return Err(format!(
+                    "broker crash-looped {rapid_crashes_chirho}x; supervisor stopping to avoid a restart bomb"
+                ));
+            }
+            SupervisorActionChirho::RestartAfterChirho(backoff_chirho) => {
+                eprintln!("restarting broker in {backoff_chirho:?}");
+                thread::sleep(backoff_chirho);
+            }
+        }
+    }
+}
+
 /// Builds the broker's listening socket with SO_REUSEADDR set, so a freshly
 /// launched broker can rebind (e.g. 127.0.0.1:37371) immediately over sockets
 /// the previous process left in TIME_WAIT — clean restarts instead of a
@@ -1424,6 +1495,12 @@ fn main_chirho() -> Result<(), String> {
                 .unwrap_or_else(|| "127.0.0.1:37371".to_string());
             let db_path_chirho = arg_value_chirho(&args_chirho, "--db").map(PathBuf::from);
             run_server_chirho(&bind_chirho, db_path_chirho)
+        }
+        "supervise" => {
+            let bind_chirho = arg_value_chirho(&args_chirho, "--bind")
+                .unwrap_or_else(|| "127.0.0.1:37371".to_string());
+            let db_path_chirho = arg_value_chirho(&args_chirho, "--db").map(PathBuf::from);
+            run_supervisor_chirho(&bind_chirho, db_path_chirho)
         }
         "register" => run_register_cli_chirho(&args_chirho),
         "remove" => run_remove_cli_chirho(&args_chirho),
