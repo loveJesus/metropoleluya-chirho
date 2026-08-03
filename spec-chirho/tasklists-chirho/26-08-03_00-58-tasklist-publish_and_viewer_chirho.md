@@ -7,4 +7,4 @@
 - [x] Inspect the live broker's fleet-wide agent/liveness data and document what `last_seen_ms_chirho` actually means.
 - [x] Re-run repository landing gates after the final publish-oriented documentation check (40 tests; format, Clippy, and release build clean).
 - [x] Stage only the Metropoleluya/private-channel/Agy artifacts owned by this work; preserve the unrelated central-watcher tasklist.
-- [ ] Commit on `main_chirho`, push to `gh_chirho`, and verify local/remote commit identity.
+- [x] Commit on `main_chirho`, push to `gh_chirho`, and verify local/remote commit identity (`12cbb648773827df27892b250fd77abd10a04818`).
