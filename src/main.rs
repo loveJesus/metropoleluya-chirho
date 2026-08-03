@@ -2,22 +2,26 @@
 
 use jiff::Timestamp;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod channels_chirho;
+mod console_chirho;
 mod tui_chirho;
 mod tui_membership_chirho;
 
+#[cfg(test)]
+mod channels_tests_chirho;
 #[cfg(test)]
 mod main_tests_chirho;
 
@@ -35,6 +39,10 @@ struct RegisterRequestChirho {
     topics_chirho: Vec<String>,
     #[serde(default)]
     notify_actor_chirho: Option<String>,
+    #[serde(default)]
+    private_chirho: bool,
+    #[serde(default)]
+    ttl_seconds_chirho: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,21 +68,10 @@ struct RemoveRequestChirho {
     room_chirho: String,
 }
 
-#[derive(Debug, Serialize)]
-struct MessageViewChirho {
-    id_chirho: i64,
-    at_ms_chirho: i64,
-    at_text_chirho: String,
-    from_identity_chirho: String,
-    room_chirho: String,
-    topic_chirho: String,
-    body_chirho: String,
-}
-
-#[derive(Debug)]
-struct AgentTargetChirho {
-    identity_chirho: String,
-    tmux_target_chirho: String,
+#[derive(Debug, Clone)]
+pub(crate) struct AgentTargetChirho {
+    pub(crate) identity_chirho: String,
+    pub(crate) tmux_target_chirho: String,
 }
 
 #[derive(Debug)]
@@ -90,7 +87,7 @@ pub(crate) fn default_topic_chirho() -> String {
     "general-chirho".to_string()
 }
 
-fn now_ms_chirho() -> i64 {
+pub(crate) fn now_ms_chirho() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_secs(0))
@@ -108,7 +105,11 @@ const EASTERN_TZ_CHIRHO: &str = "America/New_York";
 pub(crate) fn format_timestamp_chirho(at_ms_chirho: i64) -> String {
     Timestamp::from_millisecond(at_ms_chirho)
         .and_then(|instant_chirho| instant_chirho.in_tz(EASTERN_TZ_CHIRHO))
-        .map(|zoned_chirho| zoned_chirho.strftime("%Y-%m-%d %H:%M:%S.%3f %Z").to_string())
+        .map(|zoned_chirho| {
+            zoned_chirho
+                .strftime("%Y-%m-%d %H:%M:%S.%3f %Z")
+                .to_string()
+        })
         .unwrap_or_else(|_| format!("{at_ms_chirho}ms-epoch"))
 }
 
@@ -119,11 +120,11 @@ fn default_db_path_chirho() -> PathBuf {
         .join("metropoleluya-chirho.sqlite")
 }
 
-fn identity_chirho(session_chirho: &str, agent_chirho: &str) -> String {
+pub(crate) fn identity_chirho(session_chirho: &str, agent_chirho: &str) -> String {
     format!("{}/{}", session_chirho, agent_chirho)
 }
 
-fn validate_token_chirho(name_chirho: &str, value_chirho: &str) -> Result<(), String> {
+pub(crate) fn validate_token_chirho(name_chirho: &str, value_chirho: &str) -> Result<(), String> {
     if value_chirho.trim().is_empty() {
         return Err(format!("{name_chirho} is required"));
     }
@@ -136,7 +137,7 @@ fn validate_token_chirho(name_chirho: &str, value_chirho: &str) -> Result<(), St
     Ok(())
 }
 
-fn validate_body_chirho(body_chirho: &str) -> Result<(), String> {
+pub(crate) fn validate_body_chirho(body_chirho: &str) -> Result<(), String> {
     if body_chirho.trim().is_empty() {
         return Err("body_chirho is required".to_string());
     }
@@ -152,7 +153,19 @@ fn open_db_chirho(path_chirho: Option<PathBuf>) -> Result<Connection, String> {
         fs::create_dir_all(parent_chirho).map_err(|err_chirho| err_chirho.to_string())?;
     }
     let conn_chirho = Connection::open(path_chirho).map_err(|err_chirho| err_chirho.to_string())?;
+    conn_chirho
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|err_chirho| err_chirho.to_string())?;
     init_db_chirho(&conn_chirho)?;
+    Ok(conn_chirho)
+}
+
+fn open_request_db_chirho(path_chirho: Option<PathBuf>) -> Result<Connection, String> {
+    let path_chirho = path_chirho.unwrap_or_else(default_db_path_chirho);
+    let conn_chirho = Connection::open(path_chirho).map_err(|err_chirho| err_chirho.to_string())?;
+    conn_chirho
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|err_chirho| err_chirho.to_string())?;
     Ok(conn_chirho)
 }
 
@@ -226,7 +239,8 @@ fn init_db_chirho(conn_chirho: &Connection) -> Result<(), String> {
                 from deliveries_chirho;
             "#,
         )
-        .map_err(|err_chirho| err_chirho.to_string())
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    channels_chirho::init_channels_chirho(conn_chirho)
 }
 
 /// Registration also serves the TUI "add to room" flow
@@ -246,7 +260,35 @@ fn register_agent_chirho(
         identity_chirho(&request_chirho.session_chirho, &request_chirho.agent_chirho);
     let probe_chirho = probe_tmux_target_chirho(&request_chirho.tmux_target_chirho);
     let now_chirho = now_ms_chirho();
-    conn_chirho
+    let topics_chirho = if request_chirho.topics_chirho.is_empty() {
+        vec!["*".to_string()]
+    } else {
+        request_chirho.topics_chirho.clone()
+    };
+    for room_chirho in &request_chirho.rooms_chirho {
+        validate_token_chirho("room_chirho", room_chirho)?;
+    }
+    for topic_chirho in &topics_chirho {
+        validate_token_chirho("topic_chirho", topic_chirho)?;
+    }
+
+    // Membership policy, registration, and all requested subscriptions land
+    // together. A denied room cannot leave behind a mutated agent or a
+    // half-created private channel.
+    let tx_chirho = conn_chirho
+        .unchecked_transaction()
+        .map_err(|err_chirho| err_chirho.to_string())?;
+    for room_chirho in &request_chirho.rooms_chirho {
+        channels_chirho::prepare_room_membership_chirho(
+            &tx_chirho,
+            room_chirho,
+            &identity_chirho,
+            request_chirho.notify_actor_chirho.as_deref(),
+            request_chirho.private_chirho,
+            request_chirho.ttl_seconds_chirho,
+        )?;
+    }
+    tx_chirho
         .execute(
             r#"
             insert into agents_chirho (
@@ -272,17 +314,9 @@ fn register_agent_chirho(
             ],
         )
         .map_err(|err_chirho| err_chirho.to_string())?;
-
-    let topics_chirho = if request_chirho.topics_chirho.is_empty() {
-        vec!["*".to_string()]
-    } else {
-        request_chirho.topics_chirho
-    };
     for room_chirho in &request_chirho.rooms_chirho {
-        validate_token_chirho("room_chirho", room_chirho)?;
         for topic_chirho in &topics_chirho {
-            validate_token_chirho("topic_chirho", topic_chirho)?;
-            conn_chirho
+            tx_chirho
                 .execute(
                     r#"
                     insert into subscriptions_chirho (identity_chirho, room_chirho, topic_chirho, active_chirho)
@@ -294,6 +328,9 @@ fn register_agent_chirho(
                 .map_err(|err_chirho| err_chirho.to_string())?;
         }
     }
+    tx_chirho
+        .commit()
+        .map_err(|err_chirho| err_chirho.to_string())?;
 
     let notified_chirho = match request_chirho.notify_actor_chirho.as_deref() {
         Some(actor_chirho) if !request_chirho.rooms_chirho.is_empty() => {
@@ -341,6 +378,11 @@ fn remove_agent_chirho(
     );
     let identity_chirho =
         identity_chirho(&request_chirho.session_chirho, &request_chirho.agent_chirho);
+    channels_chirho::authorize_membership_change_chirho(
+        conn_chirho,
+        &request_chirho.room_chirho,
+        &from_identity_chirho,
+    )?;
     let tmux_target_chirho: Option<String> = conn_chirho
         .query_row(
             "select tmux_target_chirho from agents_chirho where identity_chirho = ?1",
@@ -373,10 +415,10 @@ fn remove_agent_chirho(
 
 /// Outcome of one delivery attempt, produced off-thread (tmux I/O only) so the
 /// caller can persist results and prune afterward with the DB handle.
-struct DeliveryOutcomeChirho {
-    alive_chirho: bool,
-    delivered_chirho: bool,
-    error_chirho: Option<String>,
+pub(crate) struct DeliveryOutcomeChirho {
+    pub(crate) alive_chirho: bool,
+    pub(crate) delivered_chirho: bool,
+    pub(crate) error_chirho: Option<String>,
 }
 
 fn deliver_one_chirho(tmux_target_chirho: &str, text_chirho: &str) -> DeliveryOutcomeChirho {
@@ -409,7 +451,7 @@ fn deliver_one_chirho(tmux_target_chirho: &str, text_chirho: &str) -> DeliveryOu
 /// Delivers to every target with bounded concurrency, so a post's wall-clock is
 /// roughly one delivery's settle delay regardless of subscriber count (instead
 /// of the sum). tmux I/O only — no DB handle crosses a thread boundary.
-fn deliver_parallel_chirho(
+pub(crate) fn deliver_parallel_chirho(
     targets_chirho: &[AgentTargetChirho],
     text_chirho: &str,
 ) -> Vec<DeliveryOutcomeChirho> {
@@ -420,8 +462,9 @@ fn deliver_parallel_chirho(
             chunk_chirho
                 .iter()
                 .map(|target_chirho| {
-                    scope_chirho
-                        .spawn(|| deliver_one_chirho(&target_chirho.tmux_target_chirho, text_chirho))
+                    scope_chirho.spawn(|| {
+                        deliver_one_chirho(&target_chirho.tmux_target_chirho, text_chirho)
+                    })
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -439,6 +482,8 @@ fn deliver_parallel_chirho(
     outcomes_chirho
 }
 
+/// Persists and delivers a room post after the private-channel authorization
+/// branch in `spec-chirho/workflows-chirho/private-channels-flow-chirho.md`.
 fn post_message_chirho(
     conn_chirho: &mut Connection,
     request_chirho: PostRequestChirho,
@@ -452,10 +497,21 @@ fn post_message_chirho(
         &request_chirho.from_session_chirho,
         &request_chirho.from_agent_chirho,
     );
-    let message_at_ms_chirho = now_ms_chirho();
     let tx_chirho = conn_chirho
         .transaction()
         .map_err(|err_chirho| err_chirho.to_string())?;
+    let private_room_chirho = channels_chirho::authorize_room_post_chirho(
+        &tx_chirho,
+        &request_chirho.room_chirho,
+        &from_identity_chirho,
+    )?;
+    let targets_chirho = resolve_targets_chirho(
+        &tx_chirho,
+        &request_chirho,
+        &from_identity_chirho,
+        private_room_chirho,
+    )?;
+    let message_at_ms_chirho = now_ms_chirho();
     tx_chirho
         .execute(
             r#"
@@ -476,8 +532,6 @@ fn post_message_chirho(
         .commit()
         .map_err(|err_chirho| err_chirho.to_string())?;
 
-    let targets_chirho =
-        resolve_targets_chirho(conn_chirho, &request_chirho, &from_identity_chirho)?;
     let text_chirho = format_delivery_chirho(
         message_id_chirho,
         message_at_ms_chirho,
@@ -506,7 +560,11 @@ fn post_message_chirho(
                     target_chirho.identity_chirho,
                     target_chirho.tmux_target_chirho,
                     if outcome_chirho.alive_chirho { 1 } else { 0 },
-                    if outcome_chirho.delivered_chirho { 1 } else { 0 },
+                    if outcome_chirho.delivered_chirho {
+                        1
+                    } else {
+                        0
+                    },
                     outcome_chirho.error_chirho.clone(),
                     recorded_at_ms_chirho
                 ],
@@ -545,6 +603,7 @@ fn resolve_targets_chirho(
     conn_chirho: &Connection,
     request_chirho: &PostRequestChirho,
     from_identity_chirho: &str,
+    private_room_chirho: bool,
 ) -> Result<Vec<AgentTargetChirho>, String> {
     let mut targets_chirho = Vec::new();
     if request_chirho.to_chirho.is_empty() {
@@ -582,6 +641,12 @@ fn resolve_targets_chirho(
         }
     } else {
         for identity_chirho in &request_chirho.to_chirho {
+            channels_chirho::authorize_private_target_chirho(
+                conn_chirho,
+                &request_chirho.room_chirho,
+                identity_chirho,
+                private_room_chirho,
+            )?;
             let target_chirho = conn_chirho
                 .query_row(
                     "select identity_chirho, tmux_target_chirho from agents_chirho where identity_chirho = ?1",
@@ -601,47 +666,6 @@ fn resolve_targets_chirho(
         }
     }
     Ok(targets_chirho)
-}
-
-fn list_messages_chirho(
-    conn_chirho: &Connection,
-    room_chirho: &str,
-    after_chirho: i64,
-) -> Result<Value, String> {
-    let limit_chirho = if after_chirho <= 0 { 500 } else { 200 };
-    let mut stmt_chirho = conn_chirho
-        .prepare(
-            r#"
-            select id_chirho, at_ms_chirho, from_identity_chirho, room_chirho, topic_chirho, body_chirho
-            from messages_chirho
-            where room_chirho = ?1 and id_chirho > ?2
-            order by id_chirho
-            limit ?3
-            "#,
-        )
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    let rows_chirho = stmt_chirho
-        .query_map(
-            params![room_chirho, after_chirho, limit_chirho],
-            |row_chirho| {
-                let at_ms_chirho: i64 = row_chirho.get(1)?;
-                Ok(MessageViewChirho {
-                    id_chirho: row_chirho.get(0)?,
-                    at_ms_chirho,
-                    at_text_chirho: format_timestamp_chirho(at_ms_chirho),
-                    from_identity_chirho: row_chirho.get(2)?,
-                    room_chirho: row_chirho.get(3)?,
-                    topic_chirho: row_chirho.get(4)?,
-                    body_chirho: row_chirho.get(5)?,
-                })
-            },
-        )
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    let mut messages_chirho = Vec::new();
-    for row_chirho in rows_chirho {
-        messages_chirho.push(row_chirho.map_err(|err_chirho| err_chirho.to_string())?);
-    }
-    Ok(json!({ "ok_chirho": true, "messages_chirho": messages_chirho }))
 }
 
 fn list_agents_chirho(
@@ -666,7 +690,12 @@ fn list_agents_chirho(
                a.window_index_chirho, a.pane_id_chirho, a.alive_chirho, a.last_seen_ms_chirho,
                coalesce(group_concat(distinct s.room_chirho || ':' || s.topic_chirho), '') as topics_chirho
         from agents_chirho a
-        left join subscriptions_chirho s on s.identity_chirho = a.identity_chirho and s.active_chirho = 1
+        left join subscriptions_chirho s
+          on s.identity_chirho = a.identity_chirho
+         and s.active_chirho = 1
+         and s.room_chirho not in (
+             select room_chirho from rooms_chirho where private_chirho = 1
+         )
         group by a.identity_chirho, a.session_chirho, a.agent_chirho, a.tmux_target_chirho,
                  a.window_index_chirho, a.pane_id_chirho, a.alive_chirho, a.last_seen_ms_chirho
         order by a.identity_chirho
@@ -775,18 +804,28 @@ fn probe_tmux_target_chirho(target_chirho: &str) -> TmuxProbeChirho {
         Ok(output_chirho) if output_chirho.status.success() => {
             let text_chirho = String::from_utf8_lossy(&output_chirho.stdout);
             let parts_chirho: Vec<&str> = text_chirho.trim().split('\t').collect();
+            let session_chirho = parts_chirho
+                .first()
+                .filter(|value_chirho| !value_chirho.is_empty())
+                .map(|value_chirho| value_chirho.to_string());
+            let window_index_chirho = parts_chirho
+                .get(1)
+                .filter(|value_chirho| !value_chirho.is_empty())
+                .map(|value_chirho| value_chirho.to_string());
+            let pane_id_chirho = parts_chirho
+                .get(2)
+                .filter(|value_chirho| !value_chirho.is_empty())
+                .map(|value_chirho| value_chirho.to_string());
+            let alive_chirho = session_chirho.is_some()
+                && window_index_chirho.is_some()
+                && pane_id_chirho.is_some();
             TmuxProbeChirho {
-                alive_chirho: true,
-                session_chirho: parts_chirho
-                    .first()
-                    .map(|value_chirho| value_chirho.to_string()),
-                window_index_chirho: parts_chirho
-                    .get(1)
-                    .map(|value_chirho| value_chirho.to_string()),
-                pane_id_chirho: parts_chirho
-                    .get(2)
-                    .map(|value_chirho| value_chirho.to_string()),
-                error_chirho: None,
+                alive_chirho,
+                session_chirho,
+                window_index_chirho,
+                pane_id_chirho,
+                error_chirho: (!alive_chirho)
+                    .then(|| "tmux target resolved without a concrete pane_chirho".to_string()),
             }
         }
         Ok(output_chirho) => TmuxProbeChirho {
@@ -948,8 +987,12 @@ fn bind_listener_chirho(bind_chirho: &str) -> Result<TcpListener, String> {
     let addr_chirho: SocketAddr = bind_chirho
         .parse()
         .map_err(|err_chirho: std::net::AddrParseError| err_chirho.to_string())?;
-    let socket_chirho = Socket::new(Domain::for_address(addr_chirho), Type::STREAM, Some(Protocol::TCP))
-        .map_err(|err_chirho| err_chirho.to_string())?;
+    let socket_chirho = Socket::new(
+        Domain::for_address(addr_chirho),
+        Type::STREAM,
+        Some(Protocol::TCP),
+    )
+    .map_err(|err_chirho| err_chirho.to_string())?;
     socket_chirho
         .set_reuse_address(true)
         .map_err(|err_chirho| err_chirho.to_string())?;
@@ -963,6 +1006,9 @@ fn bind_listener_chirho(bind_chirho: &str) -> Result<TcpListener, String> {
 }
 
 fn run_server_chirho(bind_chirho: &str, db_path_chirho: Option<PathBuf>) -> Result<(), String> {
+    // Schema initialization and legacy backfill are startup work, not request
+    // work. Per-request connections below only set a bounded busy timeout.
+    drop(open_db_chirho(db_path_chirho.clone())?);
     let listener_chirho = bind_listener_chirho(bind_chirho)?;
     println!("metropoleluya-chirho listening on http://{bind_chirho}");
     for stream_chirho in listener_chirho.incoming() {
@@ -989,14 +1035,17 @@ fn handle_http_chirho(
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|err_chirho| err_chirho.to_string())?;
     let request_chirho = read_http_request_chirho(&mut stream_chirho)?;
-    let mut conn_chirho = open_db_chirho(db_path_chirho)?;
+    let mut conn_chirho = open_request_db_chirho(db_path_chirho)?;
     let response_chirho = route_http_chirho(&mut conn_chirho, request_chirho);
     let (status_chirho, body_chirho) = match response_chirho {
         Ok(body_chirho) => (200, body_chirho),
-        Err(err_chirho) => (
-            400,
-            json!({ "ok_chirho": false, "error_chirho": err_chirho }),
-        ),
+        Err(err_chirho) => {
+            let status_chirho = channels_chirho::http_error_status_chirho(&err_chirho);
+            (
+                status_chirho,
+                json!({ "ok_chirho": false, "error_chirho": err_chirho }),
+            )
+        }
     };
     write_http_response_chirho(&mut stream_chirho, status_chirho, &body_chirho.to_string())
 }
@@ -1094,6 +1143,8 @@ fn split_path_query_chirho(
     Ok((path_chirho.to_string(), query_chirho))
 }
 
+/// HTTP dispatch for both public-room compatibility and the authenticated-by-
+/// identity branches documented in the private-channels workflow.
 fn route_http_chirho(
     conn_chirho: &mut Connection,
     request_chirho: HttpRequestChirho,
@@ -1113,6 +1164,11 @@ fn route_http_chirho(
                 .map_err(|err_chirho| err_chirho.to_string())?;
             post_message_chirho(conn_chirho, request_chirho)
         }
+        ("POST", "/v1/dm-chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            channels_chirho::post_dm_chirho(conn_chirho, request_chirho)
+        }
         ("GET", "/v1/messages_chirho") => {
             let room_chirho = request_chirho
                 .query_chirho
@@ -1123,14 +1179,89 @@ fn route_http_chirho(
                 .get("after_chirho")
                 .and_then(|value_chirho| value_chirho.parse::<i64>().ok())
                 .unwrap_or(0);
-            list_messages_chirho(conn_chirho, room_chirho, after_chirho)
+            let viewer_identity_chirho = request_chirho
+                .query_chirho
+                .get("as_chirho")
+                .map(String::as_str);
+            channels_chirho::list_room_messages_chirho(
+                conn_chirho,
+                room_chirho,
+                after_chirho,
+                viewer_identity_chirho,
+            )
         }
         ("GET", "/v1/agents_chirho") => {
             let room_chirho = request_chirho
                 .query_chirho
                 .get("room_chirho")
                 .map(String::as_str);
+            if let Some(room_chirho) = room_chirho {
+                channels_chirho::authorize_room_read_chirho(
+                    conn_chirho,
+                    room_chirho,
+                    request_chirho
+                        .query_chirho
+                        .get("as_chirho")
+                        .map(String::as_str),
+                )?;
+            }
             list_agents_chirho(conn_chirho, room_chirho)
+        }
+        ("GET", "/v1/dms-chirho") => {
+            let identity_chirho = request_chirho
+                .query_chirho
+                .get("identity_chirho")
+                .ok_or_else(|| "identity_chirho is required".to_string())?;
+            let with_chirho = request_chirho
+                .query_chirho
+                .get("with_chirho")
+                .ok_or_else(|| "with_chirho is required".to_string())?;
+            let after_chirho = request_chirho
+                .query_chirho
+                .get("after_chirho")
+                .and_then(|value_chirho| value_chirho.parse::<i64>().ok())
+                .unwrap_or(0);
+            channels_chirho::list_dm_messages_chirho(
+                conn_chirho,
+                identity_chirho,
+                with_chirho,
+                after_chirho,
+            )
+        }
+        ("GET", "/v1/channels-chirho") => {
+            let identity_chirho = request_chirho
+                .query_chirho
+                .get("identity_chirho")
+                .ok_or_else(|| "identity_chirho is required".to_string())?;
+            let include_closed_chirho = request_chirho
+                .query_chirho
+                .get("include_closed_chirho")
+                .is_some_and(|value_chirho| value_chirho == "true");
+            channels_chirho::list_channels_chirho(
+                conn_chirho,
+                identity_chirho,
+                include_closed_chirho,
+            )
+        }
+        ("POST", "/v1/rooms-chirho/close-chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            channels_chirho::close_room_chirho(conn_chirho, request_chirho)
+        }
+        ("POST", "/v1/dms-chirho/close-chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            channels_chirho::close_dm_chirho(conn_chirho, request_chirho)
+        }
+        ("POST", "/v1/rooms-chirho/purge-chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            channels_chirho::purge_room_chirho(conn_chirho, request_chirho)
+        }
+        ("POST", "/v1/dms-chirho/purge-chirho") => {
+            let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
+                .map_err(|err_chirho| err_chirho.to_string())?;
+            channels_chirho::purge_dm_chirho(conn_chirho, request_chirho)
         }
         ("POST", "/v1/remove_chirho") => {
             let request_chirho = serde_json::from_slice(&request_chirho.body_chirho)
@@ -1147,10 +1278,11 @@ fn write_http_response_chirho(
     status_chirho: u16,
     body_chirho: &str,
 ) -> Result<(), String> {
-    let label_chirho = if status_chirho == 200 {
-        "OK"
-    } else {
-        "Bad Request"
+    let label_chirho = match status_chirho {
+        200 => "OK",
+        403 => "Forbidden",
+        404 => "Not Found",
+        _ => "Bad Request",
     };
     let response_chirho = format!(
         "HTTP/1.1 {status_chirho} {label_chirho}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_chirho}",
@@ -1185,7 +1317,16 @@ pub(crate) fn http_client_chirho(
     let (_, body_chirho) = response_chirho
         .split_once("\r\n\r\n")
         .ok_or_else(|| "bad http response".to_string())?;
-    serde_json::from_str(body_chirho).map_err(|err_chirho| err_chirho.to_string())
+    let value_chirho: Value =
+        serde_json::from_str(body_chirho).map_err(|err_chirho| err_chirho.to_string())?;
+    if value_chirho.get("ok_chirho").and_then(Value::as_bool) == Some(false) {
+        return Err(value_chirho
+            .get("error_chirho")
+            .and_then(Value::as_str)
+            .unwrap_or("broker request failed_chirho")
+            .to_string());
+    }
+    Ok(value_chirho)
 }
 
 fn parse_server_chirho(server_chirho: &str) -> Result<(String, u16), String> {
@@ -1251,7 +1392,7 @@ pub(crate) fn arg_value_chirho(args_chirho: &[String], name_chirho: &str) -> Opt
         .map(|window_chirho| window_chirho[1].clone())
 }
 
-fn arg_values_chirho(args_chirho: &[String], name_chirho: &str) -> Vec<String> {
+pub(crate) fn arg_values_chirho(args_chirho: &[String], name_chirho: &str) -> Vec<String> {
     let mut values_chirho = Vec::new();
     let mut index_chirho = 0usize;
     while index_chirho + 1 < args_chirho.len() {
@@ -1276,29 +1417,6 @@ pub(crate) fn server_arg_chirho(args_chirho: &[String]) -> String {
     arg_value_chirho(args_chirho, "--server").unwrap_or_else(|| DEFAULT_SERVER_CHIRHO.to_string())
 }
 
-fn run_register_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    let rooms_chirho = arg_values_chirho(args_chirho, "--room");
-    let topics_chirho = arg_values_chirho(args_chirho, "--topic");
-    let body_chirho = json!({
-        "session_chirho": require_arg_chirho(args_chirho, "--session")?,
-        "agent_chirho": require_arg_chirho(args_chirho, "--agent")?,
-        "tmux_target_chirho": require_arg_chirho(args_chirho, "--tmux-target")?,
-        "rooms_chirho": rooms_chirho,
-        "topics_chirho": topics_chirho
-    });
-    println!(
-        "{}",
-        http_client_chirho(
-            &server_chirho,
-            "POST",
-            "/v1/register_chirho",
-            Some(&body_chirho)
-        )?
-    );
-    Ok(())
-}
-
 fn run_remove_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
     let server_chirho = server_arg_chirho(args_chirho);
     let body_chirho = json!({
@@ -1320,172 +1438,6 @@ fn run_remove_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn run_post_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    let body_text_chirho = if let Some(file_chirho) = arg_value_chirho(args_chirho, "--body-file") {
-        fs::read_to_string(file_chirho).map_err(|err_chirho| err_chirho.to_string())?
-    } else {
-        require_arg_chirho(args_chirho, "--body")?
-    };
-    let body_chirho = json!({
-        "from_session_chirho": require_arg_chirho(args_chirho, "--from-session")?,
-        "from_agent_chirho": require_arg_chirho(args_chirho, "--from-agent")?,
-        "room_chirho": require_arg_chirho(args_chirho, "--room")?,
-        "topic_chirho": arg_value_chirho(args_chirho, "--topic").unwrap_or_else(default_topic_chirho),
-        "body_chirho": body_text_chirho,
-        "to_chirho": arg_values_chirho(args_chirho, "--to"),
-        "deliver_to_sender_chirho": args_chirho.iter().any(|arg_chirho| arg_chirho == "--deliver-to-sender")
-    });
-    println!(
-        "{}",
-        http_client_chirho(
-            &server_chirho,
-            "POST",
-            "/v1/post_chirho",
-            Some(&body_chirho)
-        )?
-    );
-    Ok(())
-}
-
-fn run_watch_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    let room_chirho = require_arg_chirho(args_chirho, "--room")?;
-    let mut after_chirho = arg_value_chirho(args_chirho, "--after")
-        .and_then(|value_chirho| value_chirho.parse::<i64>().ok())
-        .unwrap_or(0);
-    loop {
-        let path_chirho = format!(
-            "/v1/messages_chirho?room_chirho={}&after_chirho={after_chirho}",
-            percent_encode_chirho(&room_chirho)
-        );
-        let response_chirho = http_client_chirho(&server_chirho, "GET", &path_chirho, None)?;
-        if let Some(messages_chirho) = response_chirho
-            .get("messages_chirho")
-            .and_then(Value::as_array)
-        {
-            for message_chirho in messages_chirho {
-                let id_chirho = message_chirho
-                    .get("id_chirho")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(after_chirho);
-                after_chirho = after_chirho.max(id_chirho);
-                println!(
-                    "\n#{} {} {} [{}]\n{}\n",
-                    id_chirho,
-                    message_chirho
-                        .get("at_text_chirho")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown-time"),
-                    message_chirho
-                        .get("from_identity_chirho")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown"),
-                    message_chirho
-                        .get("topic_chirho")
-                        .and_then(Value::as_str)
-                        .unwrap_or("general-chirho"),
-                    message_chirho
-                        .get("body_chirho")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                );
-            }
-        }
-        thread::sleep(Duration::from_secs(2));
-    }
-}
-
-fn run_console_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    let session_chirho = require_arg_chirho(args_chirho, "--session")?;
-    let agent_chirho = require_arg_chirho(args_chirho, "--agent")?;
-    let room_chirho = require_arg_chirho(args_chirho, "--room")?;
-    let topic_chirho =
-        arg_value_chirho(args_chirho, "--topic").unwrap_or_else(default_topic_chirho);
-    let watch_args_chirho = vec![
-        "watch".to_string(),
-        "--server".to_string(),
-        server_chirho.clone(),
-        "--room".to_string(),
-        room_chirho.clone(),
-    ];
-    thread::spawn(move || {
-        let _ = run_watch_cli_chirho(&watch_args_chirho);
-    });
-    println!(
-        "typing as {}/{} in room {room_chirho}; enter a line to post",
-        session_chirho, agent_chirho
-    );
-    for line_chirho in io::stdin().lock().lines() {
-        let line_chirho = line_chirho.map_err(|err_chirho| err_chirho.to_string())?;
-        if line_chirho.trim().is_empty() {
-            continue;
-        }
-        let post_args_chirho = vec![
-            "post".to_string(),
-            "--server".to_string(),
-            server_chirho.clone(),
-            "--from-session".to_string(),
-            session_chirho.clone(),
-            "--from-agent".to_string(),
-            agent_chirho.clone(),
-            "--room".to_string(),
-            room_chirho.clone(),
-            "--topic".to_string(),
-            topic_chirho.clone(),
-            "--body".to_string(),
-            line_chirho,
-        ];
-        run_post_cli_chirho(&post_args_chirho)?;
-    }
-    Ok(())
-}
-
-fn run_agents_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    let path_chirho = if let Some(room_chirho) = arg_value_chirho(args_chirho, "--room") {
-        format!(
-            "/v1/agents_chirho?room_chirho={}",
-            percent_encode_chirho(&room_chirho)
-        )
-    } else {
-        "/v1/agents_chirho".to_string()
-    };
-    println!(
-        "{}",
-        http_client_chirho(&server_chirho, "GET", &path_chirho, None)?
-    );
-    Ok(())
-}
-
-fn run_refresh_cli_chirho(args_chirho: &[String]) -> Result<(), String> {
-    let server_chirho = server_arg_chirho(args_chirho);
-    println!(
-        "{}",
-        http_client_chirho(
-            &server_chirho,
-            "POST",
-            "/v1/refresh_chirho",
-            Some(&json!({}))
-        )?
-    );
-    Ok(())
-}
-
-fn usage_chirho() -> &'static str {
-    "usage:
-  metropoleluya-chirho server [--bind 127.0.0.1:37371] [--db path]
-  metropoleluya-chirho register --session S --agent A --tmux-target T --room R [--topic T]
-  metropoleluya-chirho remove --from-session S --from-agent A --session TS --agent TA --room R
-  metropoleluya-chirho post --from-session S --from-agent A --room R [--topic T] (--body TEXT|--body-file PATH) [--to SESSION/agent]
-  metropoleluya-chirho watch --room R
-  metropoleluya-chirho console --session S --agent A --room R [--topic T]
-  metropoleluya-chirho tui --session S --agent A --room R [--topic T] [--after ID]
-  metropoleluya-chirho agents [--room R]
-  metropoleluya-chirho refresh"
-}
-
 fn main_chirho() -> Result<(), String> {
     let args_chirho: Vec<String> = env::args().skip(1).collect();
     let command_chirho = args_chirho.first().map(String::as_str).unwrap_or("");
@@ -1502,15 +1454,17 @@ fn main_chirho() -> Result<(), String> {
             let db_path_chirho = arg_value_chirho(&args_chirho, "--db").map(PathBuf::from);
             run_supervisor_chirho(&bind_chirho, db_path_chirho)
         }
-        "register" => run_register_cli_chirho(&args_chirho),
+        "register" => console_chirho::run_register_cli_chirho(&args_chirho),
         "remove" => run_remove_cli_chirho(&args_chirho),
-        "post" => run_post_cli_chirho(&args_chirho),
-        "watch" => run_watch_cli_chirho(&args_chirho),
-        "console" => run_console_cli_chirho(&args_chirho),
+        "post" => console_chirho::run_post_cli_chirho(&args_chirho),
+        "watch" => console_chirho::run_watch_cli_chirho(&args_chirho),
+        "console" => console_chirho::run_console_cli_chirho(&args_chirho),
         "tui" => tui_chirho::run_tui_cli_chirho(&args_chirho),
-        "agents" => run_agents_cli_chirho(&args_chirho),
-        "refresh" => run_refresh_cli_chirho(&args_chirho),
-        _ => Err(usage_chirho().to_string()),
+        "agents" => console_chirho::run_agents_cli_chirho(&args_chirho),
+        "rooms" => channels_chirho::run_rooms_cli_chirho(&args_chirho),
+        "dm" => channels_chirho::run_dm_cli_chirho(&args_chirho),
+        "refresh" => console_chirho::run_refresh_cli_chirho(&args_chirho),
+        _ => Err(console_chirho::usage_chirho().to_string()),
     }
 }
 
@@ -1520,4 +1474,3 @@ fn main() {
         std::process::exit(1);
     }
 }
-

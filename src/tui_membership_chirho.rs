@@ -220,8 +220,7 @@ pub(crate) fn handle_listeners_key_chirho(
                 state_chirho.selected_agent_chirho.saturating_sub(1);
         }
         KeyCodeChirho::Down => {
-            if agent_count_chirho > 0
-                && state_chirho.selected_agent_chirho + 1 < agent_count_chirho
+            if agent_count_chirho > 0 && state_chirho.selected_agent_chirho + 1 < agent_count_chirho
             {
                 state_chirho.selected_agent_chirho += 1;
             }
@@ -274,9 +273,8 @@ pub(crate) fn handle_modal_key_chirho(
             }
             KeyCodeChirho::Enter => {
                 if selection_chirho == 0 {
-                    state_chirho.mode_chirho = TuiModeChirho::ConfirmRemoveChirho {
-                        agent_index_chirho,
-                    };
+                    state_chirho.mode_chirho =
+                        TuiModeChirho::ConfirmRemoveChirho { agent_index_chirho };
                 } else {
                     close_popup_chirho(state_chirho);
                 }
@@ -349,11 +347,9 @@ pub(crate) fn handle_mouse_event_chirho(
                     row_chirho,
                 ) {
                     open_add_form_chirho(state_chirho);
-                } else if let Some(agent_index_chirho) = menu_glyph_index_at_chirho(
-                    &state_chirho.hits_chirho,
-                    column_chirho,
-                    row_chirho,
-                ) {
+                } else if let Some(agent_index_chirho) =
+                    menu_glyph_index_at_chirho(&state_chirho.hits_chirho, column_chirho, row_chirho)
+                {
                     state_chirho.selected_agent_chirho = agent_index_chirho;
                     state_chirho.mode_chirho = TuiModeChirho::ContextMenuChirho {
                         agent_index_chirho,
@@ -372,9 +368,8 @@ pub(crate) fn handle_mouse_event_chirho(
             agent_index_chirho, ..
         } => match popup_item_at_chirho(&state_chirho.hits_chirho, column_chirho, row_chirho) {
             Some(0) => {
-                state_chirho.mode_chirho = TuiModeChirho::ConfirmRemoveChirho {
-                    agent_index_chirho,
-                };
+                state_chirho.mode_chirho =
+                    TuiModeChirho::ConfirmRemoveChirho { agent_index_chirho };
             }
             _ => close_popup_chirho(state_chirho),
         },
@@ -582,9 +577,12 @@ pub(crate) fn render_membership_overlay_chirho(
             agent_index_chirho,
             selection_chirho,
         ),
-        TuiModeChirho::ConfirmRemoveChirho { agent_index_chirho } => {
-            render_confirm_remove_chirho(frame_chirho, area_chirho, state_chirho, agent_index_chirho)
-        }
+        TuiModeChirho::ConfirmRemoveChirho { agent_index_chirho } => render_confirm_remove_chirho(
+            frame_chirho,
+            area_chirho,
+            state_chirho,
+            agent_index_chirho,
+        ),
         TuiModeChirho::AddFormChirho(form_chirho) => {
             render_add_form_chirho(frame_chirho, area_chirho, state_chirho, &form_chirho)
         }
@@ -703,9 +701,21 @@ fn render_add_form_chirho(
     let preview_chirho = format!("-> {identity_chirho} @ {tmux_target_chirho}");
     let action_chirho = "[Enter] add   [Esc] cancel";
     let field_rows_chirho = [
-        ("session:", &form_chirho.session_chirho, AddFieldChirho::SessionChirho),
-        ("window#:", &form_chirho.window_chirho, AddFieldChirho::WindowChirho),
-        ("name:   ", &form_chirho.agent_chirho, AddFieldChirho::AgentChirho),
+        (
+            "session:",
+            &form_chirho.session_chirho,
+            AddFieldChirho::SessionChirho,
+        ),
+        (
+            "window#:",
+            &form_chirho.window_chirho,
+            AddFieldChirho::WindowChirho,
+        ),
+        (
+            "name:   ",
+            &form_chirho.agent_chirho,
+            AddFieldChirho::AgentChirho,
+        ),
     ];
     let width_chirho = (preview_chirho.len() as u16 + 4).max(44);
     let popup_chirho = centered_rect_chirho(area_chirho, width_chirho, 7);
@@ -862,7 +872,10 @@ mod tests_chirho {
     fn right_click_then_menu_then_confirm_then_escape_chirho() {
         let mut state_chirho = test_state_chirho();
         state_chirho.hits_chirho = seeded_hits_chirho();
-        handle_mouse_event_chirho(&mut state_chirho, mouse_down_chirho(MouseButtonChirho::Right, 85, 11));
+        handle_mouse_event_chirho(
+            &mut state_chirho,
+            mouse_down_chirho(MouseButtonChirho::Right, 85, 11),
+        );
         assert_eq!(
             state_chirho.mode_chirho,
             TuiModeChirho::ContextMenuChirho {
@@ -964,7 +977,10 @@ mod tests_chirho {
     fn left_click_add_button_opens_prefilled_form_chirho() {
         let mut state_chirho = test_state_chirho();
         state_chirho.hits_chirho = seeded_hits_chirho();
-        handle_mouse_event_chirho(&mut state_chirho, mouse_down_chirho(MouseButtonChirho::Left, 84, 5));
+        handle_mouse_event_chirho(
+            &mut state_chirho,
+            mouse_down_chirho(MouseButtonChirho::Left, 84, 5),
+        );
         match &state_chirho.mode_chirho {
             TuiModeChirho::AddFormChirho(form_chirho) => {
                 assert_eq!(form_chirho.session_chirho, "METROLELUYA");

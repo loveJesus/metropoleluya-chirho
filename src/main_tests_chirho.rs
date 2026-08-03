@@ -19,6 +19,14 @@ fn deliver_parallel_handles_empty_targets_chirho() {
 }
 
 #[test]
+fn tmux_probe_rejects_empty_success_for_missing_target_chirho() {
+    let probe_chirho = probe_tmux_target_chirho("__METRO_SMOKE_MISSING_CHIRHO__:997");
+    assert!(!probe_chirho.alive_chirho);
+    assert!(probe_chirho.session_chirho.is_none());
+    assert!(probe_chirho.error_chirho.is_some());
+}
+
+#[test]
 fn supervisor_backs_off_then_gives_up_chirho() {
     let mut crashes_chirho = 0u32;
     // Rapid crashes (ran < 10s) grow the backoff: 2s, 4s, 8s, 16s...
@@ -38,7 +46,7 @@ fn supervisor_backs_off_then_gives_up_chirho() {
 #[test]
 fn supervisor_resets_after_healthy_run_chirho() {
     let mut crashes_chirho = 4u32; // on the brink of giving up
-    // A healthy run (>= 10s) clears the counter and restarts promptly.
+                                   // A healthy run (>= 10s) clears the counter and restarts promptly.
     assert_eq!(
         next_supervisor_action_chirho(Duration::from_secs(30), &mut crashes_chirho),
         SupervisorActionChirho::RestartAfterChirho(Duration::from_secs(1))
@@ -89,6 +97,22 @@ fn body_validation_allows_multiline_agent_messages_chirho() {
 }
 
 #[test]
+fn authorization_errors_use_forbidden_http_status_chirho() {
+    assert_eq!(
+        channels_chirho::http_error_status_chirho("authorization denied: private room"),
+        403
+    );
+    assert_eq!(
+        channels_chirho::http_error_status_chirho("unknown route"),
+        404
+    );
+    assert_eq!(
+        channels_chirho::http_error_status_chirho("room_chirho is required"),
+        400
+    );
+}
+
+#[test]
 fn in_memory_db_registers_agent_and_room_chirho() {
     let conn_chirho = Connection::open_in_memory().unwrap();
     init_db_chirho(&conn_chirho).unwrap();
@@ -101,12 +125,39 @@ fn in_memory_db_registers_agent_and_room_chirho() {
             rooms_chirho: vec!["room-chirho".to_string()],
             topics_chirho: vec!["audit-chirho".to_string()],
             notify_actor_chirho: None,
+            private_chirho: false,
+            ttl_seconds_chirho: None,
         },
     )
     .unwrap();
     assert_eq!(response_chirho["identity_chirho"], "TEST_CHIRHO/gpt_chirho");
     let agents_chirho = list_agents_chirho(&conn_chirho, Some("room-chirho")).unwrap();
     assert_eq!(agents_chirho["agents_chirho"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn request_connections_skip_migration_and_use_busy_timeout_chirho() {
+    let db_path_chirho = std::env::temp_dir().join(format!(
+        "metropoleluya-request-connection-{}-{}-chirho.sqlite",
+        std::process::id(),
+        now_ms_chirho()
+    ));
+    drop(open_db_chirho(Some(db_path_chirho.clone())).unwrap());
+    let conn_chirho = open_request_db_chirho(Some(db_path_chirho.clone())).unwrap();
+    let busy_timeout_ms_chirho: i64 = conn_chirho
+        .query_row("pragma busy_timeout", [], |row_chirho| row_chirho.get(0))
+        .unwrap();
+    assert_eq!(busy_timeout_ms_chirho, 5_000);
+    let schema_count_chirho: i64 = conn_chirho
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table' and name = 'agents_chirho'",
+            [],
+            |row_chirho| row_chirho.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_count_chirho, 1);
+    drop(conn_chirho);
+    std::fs::remove_file(db_path_chirho).unwrap();
 }
 
 #[test]
@@ -139,7 +190,9 @@ fn sqlite_messages_view_exposes_readable_timestamp_chirho() {
     // The SQL view keeps canonical UTC (Z-suffixed) for raw DB inspection.
     assert_eq!(at_text_chirho, "2024-01-01 00:00:00.123Z");
     // The API/TUI display path localizes the same instant to America/New_York.
-    let listed_chirho = list_messages_chirho(&conn_chirho, "project-chirho", 0).unwrap();
+    let listed_chirho =
+        channels_chirho::list_room_messages_chirho(&conn_chirho, "project-chirho", 0, None)
+            .unwrap();
     assert_eq!(
         listed_chirho["messages_chirho"][0]["at_text_chirho"],
         "2023-12-31 19:00:00.123 EST"
@@ -159,6 +212,8 @@ fn remove_agent_deletes_only_targeted_room_chirho() {
             rooms_chirho: vec!["room-a-chirho".to_string(), "room-b-chirho".to_string()],
             topics_chirho: vec![],
             notify_actor_chirho: None,
+            private_chirho: false,
+            ttl_seconds_chirho: None,
         },
     )
     .unwrap();
@@ -235,6 +290,8 @@ fn register_notify_actor_reports_unnotified_for_dead_pane_chirho() {
             rooms_chirho: vec!["room-chirho".to_string()],
             topics_chirho: vec![],
             notify_actor_chirho: Some("TEST_CHIRHO/operator_chirho".to_string()),
+            private_chirho: false,
+            ttl_seconds_chirho: None,
         },
     )
     .unwrap();

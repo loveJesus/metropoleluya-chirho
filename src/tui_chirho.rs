@@ -1,14 +1,13 @@
 // For God so loved the world, that He gave His only Begotten Son, that whosoever believeth in Him should not perish but have everlasting life. - John 3:16 (KJV)
 
+use crate::tui_membership_chirho::{
+    handle_listeners_key_chirho, handle_modal_key_chirho, handle_mouse_event_chirho,
+    render_membership_overlay_chirho, toggle_focus_chirho, AgentRowHitChirho, MembershipHitsChirho,
+    TuiFocusChirho, TuiModeChirho, ADD_BUTTON_LABEL_CHIRHO, MENU_GLYPH_LABEL_CHIRHO,
+};
 use crate::{
     arg_value_chirho, default_topic_chirho, http_client_chirho, percent_encode_chirho,
     require_arg_chirho, server_arg_chirho,
-};
-use crate::tui_membership_chirho::{
-    handle_listeners_key_chirho, handle_modal_key_chirho, handle_mouse_event_chirho,
-    render_membership_overlay_chirho, toggle_focus_chirho, AgentRowHitChirho,
-    MembershipHitsChirho, TuiFocusChirho, TuiModeChirho, ADD_BUTTON_LABEL_CHIRHO,
-    MENU_GLYPH_LABEL_CHIRHO,
 };
 use crossterm::event::{
     self, DisableMouseCapture as DisableMouseCaptureChirho,
@@ -209,10 +208,15 @@ fn refresh_state_if_due_chirho(state_chirho: &mut TuiStateChirho) -> bool {
 
 /// Returns `true` when at least one new message was appended to the transcript.
 fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
+    let viewer_identity_chirho = format!(
+        "{}/{}",
+        state_chirho.session_chirho, state_chirho.agent_chirho
+    );
     let path_chirho = format!(
-        "/v1/messages_chirho?room_chirho={}&after_chirho={}",
+        "/v1/messages_chirho?room_chirho={}&after_chirho={}&as_chirho={}",
         percent_encode_chirho(&state_chirho.room_chirho),
-        state_chirho.after_chirho
+        state_chirho.after_chirho,
+        percent_encode_chirho(&viewer_identity_chirho)
     );
     let response_chirho =
         http_client_chirho(&state_chirho.server_chirho, "GET", &path_chirho, None)?;
@@ -262,9 +266,14 @@ fn fetch_messages_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, Stri
 
 /// Returns `true` when the roster differs from what is already on screen.
 fn fetch_agents_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
+    let viewer_identity_chirho = format!(
+        "{}/{}",
+        state_chirho.session_chirho, state_chirho.agent_chirho
+    );
     let path_chirho = format!(
-        "/v1/agents_chirho?room_chirho={}",
-        percent_encode_chirho(&state_chirho.room_chirho)
+        "/v1/agents_chirho?room_chirho={}&as_chirho={}",
+        percent_encode_chirho(&state_chirho.room_chirho),
+        percent_encode_chirho(&viewer_identity_chirho)
     );
     let response_chirho =
         http_client_chirho(&state_chirho.server_chirho, "GET", &path_chirho, None)?;
@@ -388,7 +397,12 @@ fn handle_key_event_chirho(
 }
 
 fn submit_input_chirho(state_chirho: &mut TuiStateChirho) -> Result<bool, String> {
-    let input_chirho = state_chirho.input_area_chirho.lines().join("\n").trim().to_string();
+    let input_chirho = state_chirho
+        .input_area_chirho
+        .lines()
+        .join("\n")
+        .trim()
+        .to_string();
     state_chirho.input_area_chirho = new_compose_area_chirho();
     if input_chirho.is_empty() {
         return Ok(false);
@@ -627,7 +641,9 @@ fn render_agents_chirho(
                 .agent_rows_chirho
                 .push(AgentRowHitChirho {
                     row_start_chirho,
-                    row_end_chirho: row_start_chirho.saturating_add(2).min(content_bottom_chirho),
+                    row_end_chirho: row_start_chirho
+                        .saturating_add(2)
+                        .min(content_bottom_chirho),
                     agent_index_chirho: index_chirho,
                 });
         }
@@ -677,11 +693,8 @@ fn render_agents_chirho(
     } else {
         "listeners-chirho"
     };
-    let agents_chirho = Paragraph::new(lines_chirho).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title_chirho),
-    );
+    let agents_chirho = Paragraph::new(lines_chirho)
+        .block(Block::default().borders(Borders::ALL).title(title_chirho));
     frame_chirho.render_widget(agents_chirho, area_chirho);
 }
 
