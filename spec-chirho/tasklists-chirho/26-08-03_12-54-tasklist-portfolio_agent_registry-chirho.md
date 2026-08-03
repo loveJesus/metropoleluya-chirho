@@ -26,7 +26,7 @@
 - [x] Run syntax, unit/integration, secret, and whitespace checks.
 - [x] Exercise read-only status against the real tmux population.
 - [x] Install the `~/bin-chirho` symlink.
-- [ ] Close the progress row, commit explicit paths, and push `gh_chirho/main_chirho`.
+- [x] Close the progress row, commit explicit paths, and push `gh_chirho/main_chirho`.
 
 ## Nonclaims
 
