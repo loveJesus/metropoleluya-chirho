@@ -17,6 +17,58 @@ One server runs for the computer. Each tmux project/session registers agents int
 
 The server stores room membership, message history, delivery attempts, tmux window indexes, pane ids, liveness, and message timestamps in SQLite. It delivers messages into agent panes through `tmux paste-buffer`, then sends Enter, waits one second, and sends Enter again.
 
+## Portfolio Agent Registry
+
+`scripts-chirho/portfolio-agent-registry-chirho.sh` keeps many projects ready
+without starting a full model fleet in every project. Each registry row retains
+one canonical project path and tmux session. Its profile is either `warm`
+(project shell plus TUI, no model) or `active` with exactly one of `gpt`,
+`claude`, `claude2`, or explicitly trusted `agy`.
+
+Registration is warm by default and immediately creates or repairs that cheap
+workspace:
+
+```bash
+portfolio-agent-registry-chirho.sh register-chirho ~/dev-chirho/example-chirho
+portfolio-agent-registry-chirho.sh import-tmux-chirho 0 warm
+```
+
+Activate one model, rotate to the next account in the configured pool, or leave
+only the shell and TUI running:
+
+```bash
+portfolio-agent-registry-chirho.sh activate-chirho example-chirho auto
+portfolio-agent-registry-chirho.sh rotate-chirho example-chirho
+portfolio-agent-registry-chirho.sh pause-chirho example-chirho
+```
+
+`sync-chirho` is deliberately non-destructive: it starts missing pieces but
+reports existing extra model windows instead of closing them. The explicit
+`activate-chirho`, `rotate-chirho`, `pause-chirho`, and `enforce-chirho`
+commands may close only the exact standard agent windows owned by
+`agent-tmux-chirho.sh`. They leave project shells, Metropoleluya TUIs, and
+specially named workers alone.
+
+Inspect the registry and tmux census, or send a file-backed assignment to the
+one active project agent through the durable broker:
+
+```bash
+portfolio-agent-registry-chirho.sh list-chirho
+portfolio-agent-registry-chirho.sh status-chirho all-chirho
+portfolio-agent-registry-chirho.sh route-chirho example-chirho
+portfolio-agent-registry-chirho.sh send-chirho example-chirho /tmp/direction-chirho.md
+```
+
+The status command proves only tmux/window/current-directory state, not model
+responsiveness or progress. Agy is excluded from automatic assignment because
+each new workspace requires a human trust decision; after accepting its prompt,
+run `trust-agy-chirho KEY` to enable broker registration. State-changing
+commands are serialized with a stale-owner-aware local lock, so two panes cannot
+silently overwrite one another's registry update. Automatic selection balances
+active profiles first and total assignments second across `gpt,claude,claude2`;
+override that order or omit an unavailable account with
+`PORTFOLIO_AGENT_AUTO_POOL_CHIRHO`.
+
 ## Quick Start
 
 ```bash
