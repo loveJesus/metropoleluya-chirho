@@ -20,3 +20,18 @@
 - [x] Prove unrelated physical panes remain independently lockable and the target-lock registry returns to zero.
 - [x] Rerun focused and full actual-scope gates while preserving the live broker PID.
 - [x] Return a superseding `READY_FOR_REVIEW` to AICEO/GPT without committing or deploying.
+
+## Live handoff receipt Chirho
+
+- [x] Land the reviewed seven-path repair at
+  `16bc0e8ade26a7e6e3b85443d2a734ccafc8aa8a`.
+- [x] Build the release binary and record SHA-256
+  `9e26cbda8d06fda764ae17d76284d3de9629439695c659b021dfa248fd0cfca6`.
+- [x] Start the release against a private temporary database on `127.0.0.1:37372`; verify health
+  and an empty roster, then stop it and remove the temporary fixture.
+- [x] Confirm live PID `98058` owns pane `%2`, has only its listening socket and no established
+  request connection immediately before replacement.
+- [x] Respawn the same broker pane with the reviewed release; verify healthy listener PID `24725`
+  and exact executable path on `127.0.0.1:37371`.
+- [x] Prove post-handoff delivery through durable DM `#96`. The public GitHub remote remains
+  unchanged; local `main_chirho` is intentionally one reviewed commit ahead.
