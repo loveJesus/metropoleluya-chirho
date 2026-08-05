@@ -11,14 +11,17 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod channels_chirho;
 mod console_chirho;
+mod tmux_transport_chirho;
 mod tui_chirho;
 mod tui_membership_chirho;
+
+use tmux_transport_chirho::{probe_tmux_target_chirho, send_tmux_message_chirho};
 
 #[cfg(test)]
 mod channels_tests_chirho;
@@ -26,7 +29,6 @@ mod channels_tests_chirho;
 mod main_tests_chirho;
 
 const DEFAULT_SERVER_CHIRHO: &str = "http://127.0.0.1:37371";
-const BUFFER_NAME_CHIRHO: &str = "metropoleluya-chirho";
 
 #[derive(Debug, Deserialize)]
 struct RegisterRequestChirho {
@@ -72,15 +74,6 @@ struct RemoveRequestChirho {
 pub(crate) struct AgentTargetChirho {
     pub(crate) identity_chirho: String,
     pub(crate) tmux_target_chirho: String,
-}
-
-#[derive(Debug)]
-struct TmuxProbeChirho {
-    alive_chirho: bool,
-    session_chirho: Option<String>,
-    window_index_chirho: Option<String>,
-    pane_id_chirho: Option<String>,
-    error_chirho: Option<String>,
 }
 
 pub(crate) fn default_topic_chirho() -> String {
@@ -790,65 +783,6 @@ fn refresh_agents_chirho(conn_chirho: &Connection) -> Result<Value, String> {
     Ok(json!({ "ok_chirho": true, "refreshed_chirho": count_chirho }))
 }
 
-fn probe_tmux_target_chirho(target_chirho: &str) -> TmuxProbeChirho {
-    let output_chirho = Command::new("tmux")
-        .args([
-            "display-message",
-            "-p",
-            "-t",
-            target_chirho,
-            "#{session_name}\t#{window_index}\t#{pane_id}",
-        ])
-        .output();
-    match output_chirho {
-        Ok(output_chirho) if output_chirho.status.success() => {
-            let text_chirho = String::from_utf8_lossy(&output_chirho.stdout);
-            let parts_chirho: Vec<&str> = text_chirho.trim().split('\t').collect();
-            let session_chirho = parts_chirho
-                .first()
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let window_index_chirho = parts_chirho
-                .get(1)
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let pane_id_chirho = parts_chirho
-                .get(2)
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let alive_chirho = session_chirho.is_some()
-                && window_index_chirho.is_some()
-                && pane_id_chirho.is_some();
-            TmuxProbeChirho {
-                alive_chirho,
-                session_chirho,
-                window_index_chirho,
-                pane_id_chirho,
-                error_chirho: (!alive_chirho)
-                    .then(|| "tmux target resolved without a concrete pane_chirho".to_string()),
-            }
-        }
-        Ok(output_chirho) => TmuxProbeChirho {
-            alive_chirho: false,
-            session_chirho: None,
-            window_index_chirho: None,
-            pane_id_chirho: None,
-            error_chirho: Some(
-                String::from_utf8_lossy(&output_chirho.stderr)
-                    .trim()
-                    .to_string(),
-            ),
-        },
-        Err(err_chirho) => TmuxProbeChirho {
-            alive_chirho: false,
-            session_chirho: None,
-            window_index_chirho: None,
-            pane_id_chirho: None,
-            error_chirho: Some(err_chirho.to_string()),
-        },
-    }
-}
-
 fn format_delivery_chirho(
     message_id_chirho: i64,
     at_ms_chirho: i64,
@@ -861,51 +795,6 @@ fn format_delivery_chirho(
     format!(
         "METROPOLELUYA_CHIRHO MESSAGE #{message_id_chirho} AT {at_text_chirho} FROM {from_identity_chirho} ROOM {room_chirho} TOPIC {topic_chirho}\n{body_chirho}"
     )
-}
-
-fn send_tmux_message_chirho(target_chirho: &str, text_chirho: &str) -> Result<(), String> {
-    let mut child_chirho = Command::new("tmux")
-        .args(["load-buffer", "-b", BUFFER_NAME_CHIRHO, "-"])
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    child_chirho
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "failed to open tmux load-buffer stdin".to_string())?
-        .write_all(text_chirho.as_bytes())
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    let status_chirho = child_chirho
-        .wait()
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    if !status_chirho.success() {
-        return Err("tmux load-buffer failed".to_string());
-    }
-    run_tmux_chirho(&[
-        "paste-buffer",
-        "-b",
-        BUFFER_NAME_CHIRHO,
-        "-t",
-        target_chirho,
-    ])?;
-    run_tmux_chirho(&["send-keys", "-t", target_chirho, "Enter"])?;
-    thread::sleep(Duration::from_secs(1));
-    run_tmux_chirho(&["send-keys", "-t", target_chirho, "Enter"])?;
-    Ok(())
-}
-
-fn run_tmux_chirho(args_chirho: &[&str]) -> Result<(), String> {
-    let output_chirho = Command::new("tmux")
-        .args(args_chirho)
-        .output()
-        .map_err(|err_chirho| err_chirho.to_string())?;
-    if output_chirho.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output_chirho.stderr)
-            .trim()
-            .to_string())
-    }
 }
 
 /// What the supervisor does after the broker process exits: wait then restart,

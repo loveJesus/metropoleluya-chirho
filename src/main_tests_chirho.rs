@@ -2,6 +2,562 @@
 
 use super::*;
 
+static TMUX_TEST_SEQUENCE_CHIRHO: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+const TMUX_TEST_STEP_TIMEOUT_CHIRHO: Duration = Duration::from_secs(2);
+const TMUX_TEST_HARNESS_TIMEOUT_CHIRHO: Duration = Duration::from_secs(5);
+
+fn send_test_signal_chirho(
+    sender_chirho: &std::sync::mpsc::SyncSender<()>,
+    label_chirho: &str,
+) -> Result<(), String> {
+    sender_chirho
+        .send(())
+        .map_err(|_| format!("{label_chirho} signal receiver disconnected_chirho"))
+}
+
+fn wait_for_test_signal_chirho(
+    receiver_chirho: &std::sync::mpsc::Receiver<()>,
+    timeout_chirho: Duration,
+    label_chirho: &str,
+) -> Result<(), String> {
+    match receiver_chirho.recv_timeout(timeout_chirho) {
+        Ok(()) => Ok(()),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "{label_chirho} timed out after {timeout_chirho:?}_chirho"
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(format!("{label_chirho} disconnected_chirho"))
+        }
+    }
+}
+
+fn spawn_tmux_worker_chirho<WorkChirho>(
+    result_sender_chirho: std::sync::mpsc::Sender<Result<(), String>>,
+    work_chirho: WorkChirho,
+) where
+    WorkChirho: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    let _worker_handle_chirho = std::thread::spawn(move || {
+        let result_chirho = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work_chirho))
+            .unwrap_or_else(|_| Err("tmux test worker panicked_chirho".to_string()));
+        let _result_send_chirho = result_sender_chirho.send(result_chirho);
+    });
+}
+
+fn collect_tmux_worker_results_chirho(
+    result_receiver_chirho: &std::sync::mpsc::Receiver<Result<(), String>>,
+    expected_count_chirho: usize,
+    timeout_chirho: Duration,
+) -> Result<(), String> {
+    let deadline_chirho = Instant::now()
+        .checked_add(timeout_chirho)
+        .ok_or_else(|| "tmux test deadline overflowed_chirho".to_string())?;
+    for worker_index_chirho in 0..expected_count_chirho {
+        let remaining_chirho = deadline_chirho.saturating_duration_since(Instant::now());
+        let worker_result_chirho = match result_receiver_chirho.recv_timeout(remaining_chirho) {
+            Ok(worker_result_chirho) => worker_result_chirho,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "tmux worker result {}/{} timed out after {timeout_chirho:?}_chirho",
+                    worker_index_chirho + 1,
+                    expected_count_chirho
+                ));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!(
+                    "tmux worker result {}/{} disconnected_chirho",
+                    worker_index_chirho + 1,
+                    expected_count_chirho
+                ));
+            }
+        };
+        worker_result_chirho?;
+    }
+    Ok(())
+}
+
+struct IsolatedTmuxServerChirho {
+    socket_name_chirho: String,
+    session_name_chirho: String,
+    first_pane_chirho: String,
+}
+
+impl IsolatedTmuxServerChirho {
+    fn new_chirho() -> Self {
+        let sequence_chirho =
+            TMUX_TEST_SEQUENCE_CHIRHO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let socket_name_chirho = format!(
+            "metropoleluya-buffer-test-{}-{sequence_chirho}-chirho",
+            std::process::id()
+        );
+        let session_name_chirho = "delivery-test-chirho".to_string();
+        let output_chirho = std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &socket_name_chirho,
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-x",
+                "160",
+                "-y",
+                "40",
+                "-s",
+                &session_name_chirho,
+                "-n",
+                "legacy-a-chirho",
+                "cat",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output_chirho.status.success(),
+            "isolated tmux server failed: {}",
+            String::from_utf8_lossy(&output_chirho.stderr)
+        );
+        let first_pane_chirho = String::from_utf8(output_chirho.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        assert!(!first_pane_chirho.is_empty());
+        std::thread::sleep(Duration::from_millis(50));
+        Self {
+            socket_name_chirho,
+            session_name_chirho,
+            first_pane_chirho,
+        }
+    }
+
+    fn add_pane_chirho(&self, window_name_chirho: &str) -> String {
+        let output_chirho = std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &self.socket_name_chirho,
+                "new-window",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-t",
+                &self.session_name_chirho,
+                "-n",
+                window_name_chirho,
+                "cat",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output_chirho.status.success(),
+            "isolated tmux pane failed: {}",
+            String::from_utf8_lossy(&output_chirho.stderr)
+        );
+        String::from_utf8(output_chirho.stdout)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    fn capture_pane_chirho(&self, pane_chirho: &str) -> String {
+        let output_chirho = std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &self.socket_name_chirho,
+                "capture-pane",
+                "-p",
+                "-t",
+                pane_chirho,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output_chirho.status.success(),
+            "isolated tmux capture failed: {}",
+            String::from_utf8_lossy(&output_chirho.stderr)
+        );
+        String::from_utf8(output_chirho.stdout).unwrap()
+    }
+
+    fn send_enter_chirho(&self, pane_chirho: &str) {
+        let output_chirho = std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &self.socket_name_chirho,
+                "send-keys",
+                "-t",
+                pane_chirho,
+                "Enter",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output_chirho.status.success(),
+            "isolated tmux send-keys failed: {}",
+            String::from_utf8_lossy(&output_chirho.stderr)
+        );
+    }
+
+    fn buffer_exists_chirho(&self, buffer_name_chirho: &str) -> bool {
+        std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &self.socket_name_chirho,
+                "show-buffer",
+                "-b",
+                buffer_name_chirho,
+            ])
+            .output()
+            .is_ok_and(|output_chirho| output_chirho.status.success())
+    }
+}
+
+impl Drop for IsolatedTmuxServerChirho {
+    fn drop(&mut self) {
+        let _cleanup_result_chirho = std::process::Command::new("tmux")
+            .args(["-L", &self.socket_name_chirho, "kill-server"])
+            .output();
+    }
+}
+
+#[test]
+fn concurrent_tmux_buffers_isolate_targets_and_expose_legacy_failure_chirho() {
+    let server_chirho = IsolatedTmuxServerChirho::new_chirho();
+    let legacy_pane_a_chirho = &server_chirho.first_pane_chirho;
+    let legacy_pane_b_chirho = server_chirho.add_pane_chirho("legacy-b-chirho");
+    let fixed_pane_a_chirho = server_chirho.add_pane_chirho("fixed-a-chirho");
+    let fixed_pane_b_chirho = server_chirho.add_pane_chirho("fixed-b-chirho");
+    let legacy_payload_a_chirho = "legacy-distinct-a-payload-chirho";
+    let legacy_payload_b_chirho = "legacy-distinct-b-payload-chirho";
+    let legacy_buffer_name_chirho = "metropoleluya-chirho";
+
+    // Plant the old construction deterministically: A loads the one shared
+    // buffer, B overwrites it, and only then may either target paste it.
+    let (legacy_a_loaded_sender_chirho, legacy_a_loaded_receiver_chirho) =
+        std::sync::mpsc::sync_channel(1);
+    let (legacy_b_loaded_sender_chirho, legacy_b_loaded_receiver_chirho) =
+        std::sync::mpsc::sync_channel(1);
+    let (legacy_result_sender_chirho, legacy_result_receiver_chirho) = std::sync::mpsc::channel();
+    let socket_for_a_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_a_chirho = legacy_pane_a_chirho.clone();
+    spawn_tmux_worker_chirho(legacy_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_a_chirho,
+            &pane_for_a_chirho,
+            legacy_payload_a_chirho,
+            legacy_buffer_name_chirho,
+            false,
+            move || {
+                send_test_signal_chirho(&legacy_a_loaded_sender_chirho, "legacy A loaded_chirho")?;
+                wait_for_test_signal_chirho(
+                    &legacy_b_loaded_receiver_chirho,
+                    TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+                    "legacy B load_chirho",
+                )
+            },
+        )
+    });
+    let socket_for_b_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_b_chirho = legacy_pane_b_chirho.clone();
+    spawn_tmux_worker_chirho(legacy_result_sender_chirho.clone(), move || {
+        wait_for_test_signal_chirho(
+            &legacy_a_loaded_receiver_chirho,
+            TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+            "legacy A load_chirho",
+        )?;
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_b_chirho,
+            &pane_for_b_chirho,
+            legacy_payload_b_chirho,
+            legacy_buffer_name_chirho,
+            false,
+            move || {
+                send_test_signal_chirho(&legacy_b_loaded_sender_chirho, "legacy B loaded_chirho")
+            },
+        )
+    });
+    drop(legacy_result_sender_chirho);
+    collect_tmux_worker_results_chirho(
+        &legacy_result_receiver_chirho,
+        2,
+        TMUX_TEST_HARNESS_TIMEOUT_CHIRHO,
+    )
+    .unwrap();
+    let legacy_capture_a_chirho = server_chirho.capture_pane_chirho(legacy_pane_a_chirho);
+    assert!(legacy_capture_a_chirho.contains(legacy_payload_b_chirho));
+    assert!(!legacy_capture_a_chirho.contains(legacy_payload_a_chirho));
+
+    // The repaired construction reaches the same load/load/paste interleaving,
+    // but each target owns a distinct buffer which paste-buffer deletes.
+    let fixed_payload_a_chirho = "fixed-distinct-a-payload-chirho";
+    let fixed_payload_b_chirho = "fixed-distinct-b-payload-chirho";
+    let fixed_buffer_a_chirho = tmux_transport_chirho::next_tmux_buffer_name_chirho();
+    let fixed_buffer_b_chirho = tmux_transport_chirho::next_tmux_buffer_name_chirho();
+    assert_ne!(fixed_buffer_a_chirho, fixed_buffer_b_chirho);
+    let (fixed_a_loaded_sender_chirho, fixed_a_loaded_receiver_chirho) =
+        std::sync::mpsc::sync_channel(1);
+    let (fixed_b_loaded_sender_chirho, fixed_b_loaded_receiver_chirho) =
+        std::sync::mpsc::sync_channel(1);
+    let (fixed_result_sender_chirho, fixed_result_receiver_chirho) = std::sync::mpsc::channel();
+    let socket_for_a_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_a_chirho = fixed_pane_a_chirho.clone();
+    let buffer_for_a_chirho = fixed_buffer_a_chirho.clone();
+    spawn_tmux_worker_chirho(fixed_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_a_chirho,
+            &pane_for_a_chirho,
+            fixed_payload_a_chirho,
+            &buffer_for_a_chirho,
+            true,
+            move || {
+                send_test_signal_chirho(&fixed_a_loaded_sender_chirho, "fixed A loaded_chirho")?;
+                wait_for_test_signal_chirho(
+                    &fixed_b_loaded_receiver_chirho,
+                    TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+                    "fixed B load_chirho",
+                )
+            },
+        )
+    });
+    let socket_for_b_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_b_chirho = fixed_pane_b_chirho.clone();
+    let buffer_for_b_chirho = fixed_buffer_b_chirho.clone();
+    spawn_tmux_worker_chirho(fixed_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_b_chirho,
+            &pane_for_b_chirho,
+            fixed_payload_b_chirho,
+            &buffer_for_b_chirho,
+            true,
+            move || {
+                send_test_signal_chirho(&fixed_b_loaded_sender_chirho, "fixed B loaded_chirho")?;
+                wait_for_test_signal_chirho(
+                    &fixed_a_loaded_receiver_chirho,
+                    TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+                    "fixed A load_chirho",
+                )
+            },
+        )
+    });
+    drop(fixed_result_sender_chirho);
+    collect_tmux_worker_results_chirho(
+        &fixed_result_receiver_chirho,
+        2,
+        TMUX_TEST_HARNESS_TIMEOUT_CHIRHO,
+    )
+    .unwrap();
+    let fixed_capture_a_chirho = server_chirho.capture_pane_chirho(&fixed_pane_a_chirho);
+    let fixed_capture_b_chirho = server_chirho.capture_pane_chirho(&fixed_pane_b_chirho);
+    assert!(fixed_capture_a_chirho.contains(fixed_payload_a_chirho));
+    assert!(!fixed_capture_a_chirho.contains(fixed_payload_b_chirho));
+    assert!(fixed_capture_b_chirho.contains(fixed_payload_b_chirho));
+    assert!(!fixed_capture_b_chirho.contains(fixed_payload_a_chirho));
+    assert!(!server_chirho.buffer_exists_chirho(&fixed_buffer_a_chirho));
+    assert!(!server_chirho.buffer_exists_chirho(&fixed_buffer_b_chirho));
+
+    let failed_buffer_chirho = tmux_transport_chirho::next_tmux_buffer_name_chirho();
+    assert!(tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+        &server_chirho.socket_name_chirho,
+        "missing-target-chirho:997",
+        "failed-paste-payload-chirho",
+        &failed_buffer_chirho,
+        true,
+        || Ok(()),
+    )
+    .is_err());
+    assert!(!server_chirho.buffer_exists_chirho(&failed_buffer_chirho));
+}
+
+#[test]
+fn same_pane_transactions_remain_distinct_and_expose_unlocked_failure_chirho() {
+    let server_chirho = IsolatedTmuxServerChirho::new_chirho();
+    let unlocked_pane_chirho = server_chirho.first_pane_chirho.clone();
+    let fixed_pane_chirho = server_chirho.add_pane_chirho("same-pane-fixed-chirho");
+    let unlocked_payload_a_chirho = "unlocked-same-pane-a-chirho";
+    let unlocked_payload_b_chirho = "unlocked-same-pane-b-chirho";
+    let unlocked_buffer_a_chirho = tmux_transport_chirho::next_tmux_buffer_name_chirho();
+    let unlocked_buffer_b_chirho = tmux_transport_chirho::next_tmux_buffer_name_chirho();
+    let (unlocked_result_sender_chirho, unlocked_result_receiver_chirho) =
+        std::sync::mpsc::channel();
+
+    // Plant the old unlocked transaction: two distinct buffers paste into the
+    // same draft before either delivery gets to send its first Enter.
+    let socket_for_a_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_a_chirho = unlocked_pane_chirho.clone();
+    spawn_tmux_worker_chirho(unlocked_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_a_chirho,
+            &pane_for_a_chirho,
+            unlocked_payload_a_chirho,
+            &unlocked_buffer_a_chirho,
+            true,
+            || Ok(()),
+        )
+    });
+    let socket_for_b_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_b_chirho = unlocked_pane_chirho.clone();
+    spawn_tmux_worker_chirho(unlocked_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::paste_tmux_buffer_for_test_chirho(
+            &socket_for_b_chirho,
+            &pane_for_b_chirho,
+            unlocked_payload_b_chirho,
+            &unlocked_buffer_b_chirho,
+            true,
+            || Ok(()),
+        )
+    });
+    drop(unlocked_result_sender_chirho);
+    collect_tmux_worker_results_chirho(
+        &unlocked_result_receiver_chirho,
+        2,
+        TMUX_TEST_HARNESS_TIMEOUT_CHIRHO,
+    )
+    .unwrap();
+    server_chirho.send_enter_chirho(&unlocked_pane_chirho);
+    server_chirho.send_enter_chirho(&unlocked_pane_chirho);
+    std::thread::sleep(Duration::from_millis(25));
+    let unlocked_capture_chirho = server_chirho.capture_pane_chirho(&unlocked_pane_chirho);
+    assert!(unlocked_capture_chirho.lines().any(|line_chirho| {
+        line_chirho.contains(unlocked_payload_a_chirho)
+            && line_chirho.contains(unlocked_payload_b_chirho)
+    }));
+
+    // The repaired full delivery calls run concurrently, but their physical
+    // pane lease covers paste, first Enter, settle delay, and second Enter.
+    let fixed_payload_a_chirho = "fixed-same-pane-a-chirho";
+    let fixed_payload_b_chirho = "fixed-same-pane-b-chirho";
+    let (fixed_result_sender_chirho, fixed_result_receiver_chirho) = std::sync::mpsc::channel();
+    let socket_for_a_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_a_chirho = fixed_pane_chirho.clone();
+    spawn_tmux_worker_chirho(fixed_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::send_tmux_message_for_test_chirho(
+            &socket_for_a_chirho,
+            &pane_for_a_chirho,
+            fixed_payload_a_chirho,
+            Duration::from_millis(25),
+        )
+    });
+    let socket_for_b_chirho = server_chirho.socket_name_chirho.clone();
+    let pane_for_b_chirho = format!(
+        "{}:same-pane-fixed-chirho",
+        server_chirho.session_name_chirho
+    );
+    spawn_tmux_worker_chirho(fixed_result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::send_tmux_message_for_test_chirho(
+            &socket_for_b_chirho,
+            &pane_for_b_chirho,
+            fixed_payload_b_chirho,
+            Duration::from_millis(25),
+        )
+    });
+    drop(fixed_result_sender_chirho);
+    collect_tmux_worker_results_chirho(
+        &fixed_result_receiver_chirho,
+        2,
+        TMUX_TEST_HARNESS_TIMEOUT_CHIRHO,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(25));
+    let fixed_capture_chirho = server_chirho.capture_pane_chirho(&fixed_pane_chirho);
+    assert!(fixed_capture_chirho
+        .lines()
+        .any(|line_chirho| line_chirho.trim() == fixed_payload_a_chirho));
+    assert!(fixed_capture_chirho
+        .lines()
+        .any(|line_chirho| line_chirho.trim() == fixed_payload_b_chirho));
+    assert!(!fixed_capture_chirho.lines().any(|line_chirho| {
+        line_chirho.contains(fixed_payload_a_chirho) && line_chirho.contains(fixed_payload_b_chirho)
+    }));
+    assert_eq!(
+        tmux_transport_chirho::target_delivery_lock_count_for_test_chirho(
+            &server_chirho.socket_name_chirho
+        ),
+        0
+    );
+}
+
+#[test]
+fn unrelated_pane_locks_remain_concurrent_and_retire_chirho() {
+    let server_chirho = IsolatedTmuxServerChirho::new_chirho();
+    let pane_a_chirho = server_chirho.first_pane_chirho.clone();
+    let pane_b_chirho = server_chirho.add_pane_chirho("unrelated-lock-b-chirho");
+    let (a_locked_sender_chirho, a_locked_receiver_chirho) = std::sync::mpsc::sync_channel(1);
+    let (b_locked_sender_chirho, b_locked_receiver_chirho) = std::sync::mpsc::sync_channel(1);
+    let (result_sender_chirho, result_receiver_chirho) = std::sync::mpsc::channel();
+
+    let socket_for_a_chirho = server_chirho.socket_name_chirho.clone();
+    spawn_tmux_worker_chirho(result_sender_chirho.clone(), move || {
+        tmux_transport_chirho::hold_tmux_target_lock_for_test_chirho(
+            &socket_for_a_chirho,
+            &pane_a_chirho,
+            move || {
+                send_test_signal_chirho(&a_locked_sender_chirho, "pane A locked_chirho")?;
+                wait_for_test_signal_chirho(
+                    &b_locked_receiver_chirho,
+                    TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+                    "unrelated pane B lock_chirho",
+                )
+            },
+        )
+    });
+    let socket_for_b_chirho = server_chirho.socket_name_chirho.clone();
+    spawn_tmux_worker_chirho(result_sender_chirho.clone(), move || {
+        wait_for_test_signal_chirho(
+            &a_locked_receiver_chirho,
+            TMUX_TEST_STEP_TIMEOUT_CHIRHO,
+            "pane A lock_chirho",
+        )?;
+        tmux_transport_chirho::hold_tmux_target_lock_for_test_chirho(
+            &socket_for_b_chirho,
+            &pane_b_chirho,
+            move || send_test_signal_chirho(&b_locked_sender_chirho, "pane B locked_chirho"),
+        )
+    });
+    drop(result_sender_chirho);
+    collect_tmux_worker_results_chirho(
+        &result_receiver_chirho,
+        2,
+        TMUX_TEST_HARNESS_TIMEOUT_CHIRHO,
+    )
+    .unwrap();
+    assert_eq!(
+        tmux_transport_chirho::target_delivery_lock_count_for_test_chirho(
+            &server_chirho.socket_name_chirho
+        ),
+        0
+    );
+}
+
+#[test]
+fn timeout_gate_and_worker_collector_reject_missing_participants_chirho() {
+    let (missing_signal_sender_chirho, missing_signal_receiver_chirho) =
+        std::sync::mpsc::sync_channel(1);
+    let signal_start_chirho = Instant::now();
+    let signal_error_chirho = wait_for_test_signal_chirho(
+        &missing_signal_receiver_chirho,
+        Duration::from_millis(25),
+        "planted missing gate peer_chirho",
+    )
+    .unwrap_err();
+    assert!(signal_error_chirho.contains("timed out"));
+    assert!(signal_start_chirho.elapsed() < Duration::from_secs(1));
+    drop(missing_signal_sender_chirho);
+
+    let (missing_result_sender_chirho, missing_result_receiver_chirho) = std::sync::mpsc::channel();
+    missing_result_sender_chirho.send(Ok(())).unwrap();
+    let result_start_chirho = Instant::now();
+    let result_error_chirho = collect_tmux_worker_results_chirho(
+        &missing_result_receiver_chirho,
+        2,
+        Duration::from_millis(25),
+    )
+    .unwrap_err();
+    assert!(result_error_chirho.contains("timed out"));
+    assert!(result_start_chirho.elapsed() < Duration::from_secs(1));
+    drop(missing_result_sender_chirho);
+}
+
 #[test]
 fn bind_listener_binds_and_rebinds_chirho() {
     // socket2 path binds an ephemeral port and, after drop, rebinds the same

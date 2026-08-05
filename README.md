@@ -15,7 +15,7 @@ One server runs for the computer. Each tmux project/session registers agents int
 - `OTHER_PROJECT_CHIRHO/gpt_chirho`
 - future scoped agents like `PROJECT_CHIRHO/gpt_admin_chirho`
 
-The server stores room membership, message history, delivery attempts, tmux window indexes, pane ids, liveness, and message timestamps in SQLite. It delivers messages into agent panes through `tmux paste-buffer`, then sends Enter, waits one second, and sends Enter again.
+The server stores room membership, message history, delivery attempts, tmux window indexes, pane ids, liveness, and message timestamps in SQLite. It gives each delivery its own named tmux buffer, pastes and deletes that buffer with `tmux paste-buffer -d`, then sends Enter, waits one second, and sends Enter again. Distinct concurrent room posts and DMs therefore cannot overwrite one another's in-flight pane payloads. The complete sequence is serialized per resolved physical pane, preventing same-pane drafts from merging while unrelated panes remain concurrent; target-lock entries retire after their final active delivery.
 
 ## Portfolio Agent Registry
 
