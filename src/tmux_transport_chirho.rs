@@ -67,54 +67,115 @@ pub(crate) struct TmuxProbeChirho {
     pub(crate) session_chirho: Option<String>,
     pub(crate) window_index_chirho: Option<String>,
     pub(crate) pane_id_chirho: Option<String>,
+    pub(crate) window_name_chirho: Option<String>,
     pub(crate) error_chirho: Option<String>,
+}
+
+/// The window half of a `SESSION:WINDOW` target, with any `.pane` suffix and
+/// `=` exact-match prefix removed. `None` means the target names no window (a
+/// bare session, or a tmux id such as `%12` / `@3` / `$1`), so there is nothing
+/// structural to verify beyond what tmux itself enforces.
+fn requested_window_chirho(target_chirho: &str) -> Option<(&str, &str)> {
+    let target_chirho = target_chirho.strip_prefix('=').unwrap_or(target_chirho);
+    if target_chirho.starts_with(['%', '@', '$']) {
+        return None;
+    }
+    let (session_chirho, window_chirho) = target_chirho.split_once(':')?;
+    let window_chirho = window_chirho
+        .split_once('.')
+        .map_or(window_chirho, |(window_chirho, _pane_chirho)| window_chirho);
+    (!window_chirho.is_empty()).then_some((session_chirho, window_chirho))
+}
+
+/// tmux resolves `SESSION:INDEX` for an index that does not exist by silently
+/// falling back to the session's *current* window and exiting 0. A stale
+/// registration then delivers to whichever pane the operator happens to be
+/// looking at, which reads as "everyone got the message". Every resolution
+/// therefore proves tmux returned the window we actually asked for.
+fn probe_matches_request_chirho(target_chirho: &str, probe_chirho: &TmuxProbeChirho) -> bool {
+    let Some((session_chirho, window_chirho)) = requested_window_chirho(target_chirho) else {
+        return true;
+    };
+    if !session_chirho.is_empty() && probe_chirho.session_chirho.as_deref() != Some(session_chirho)
+    {
+        return false;
+    }
+    let observed_chirho = if window_chirho
+        .chars()
+        .all(|char_chirho| char_chirho.is_ascii_digit())
+    {
+        probe_chirho.window_index_chirho.as_deref()
+    } else {
+        probe_chirho.window_name_chirho.as_deref()
+    };
+    observed_chirho == Some(window_chirho)
 }
 
 /// Resolves the live-pane branch in
 /// `spec-chirho/workflows-chirho/metropoleluya-http-broker-flow-chirho.md`.
 pub(crate) fn probe_tmux_target_chirho(target_chirho: &str) -> TmuxProbeChirho {
+    probe_tmux_target_on_server_chirho(&[], target_chirho)
+}
+
+pub(crate) fn probe_tmux_target_on_server_chirho(
+    server_args_chirho: &[&str],
+    target_chirho: &str,
+) -> TmuxProbeChirho {
     let output_chirho = Command::new("tmux")
+        .args(server_args_chirho)
         .args([
             "display-message",
             "-p",
             "-t",
             target_chirho,
-            "#{session_name}\t#{window_index}\t#{pane_id}",
+            "#{session_name}\t#{window_index}\t#{pane_id}\t#{window_name}",
         ])
         .output();
     match output_chirho {
         Ok(output_chirho) if output_chirho.status.success() => {
             let text_chirho = String::from_utf8_lossy(&output_chirho.stdout);
-            let parts_chirho: Vec<&str> = text_chirho.trim().split('\t').collect();
-            let session_chirho = parts_chirho
-                .first()
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let window_index_chirho = parts_chirho
-                .get(1)
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let pane_id_chirho = parts_chirho
-                .get(2)
-                .filter(|value_chirho| !value_chirho.is_empty())
-                .map(|value_chirho| value_chirho.to_string());
-            let alive_chirho = session_chirho.is_some()
-                && window_index_chirho.is_some()
-                && pane_id_chirho.is_some();
-            TmuxProbeChirho {
-                alive_chirho,
-                session_chirho,
-                window_index_chirho,
-                pane_id_chirho,
-                error_chirho: (!alive_chirho)
-                    .then(|| "tmux target resolved without a concrete pane_chirho".to_string()),
+            let parts_chirho: Vec<&str> = text_chirho.trim_end_matches('\n').split('\t').collect();
+            let field_chirho = |index_chirho: usize| {
+                parts_chirho
+                    .get(index_chirho)
+                    .filter(|value_chirho| !value_chirho.is_empty())
+                    .map(|value_chirho| value_chirho.to_string())
+            };
+            let mut probe_chirho = TmuxProbeChirho {
+                alive_chirho: false,
+                session_chirho: field_chirho(0),
+                window_index_chirho: field_chirho(1),
+                pane_id_chirho: field_chirho(2),
+                window_name_chirho: field_chirho(3),
+                error_chirho: None,
+            };
+            let resolved_chirho = probe_chirho.session_chirho.is_some()
+                && probe_chirho.window_index_chirho.is_some()
+                && probe_chirho.pane_id_chirho.is_some();
+            if !resolved_chirho {
+                probe_chirho.error_chirho =
+                    Some("tmux target resolved without a concrete pane_chirho".to_string());
+                return probe_chirho;
             }
+            if !probe_matches_request_chirho(target_chirho, &probe_chirho) {
+                probe_chirho.error_chirho = Some(format!(
+                    "tmux target {target_chirho} does not exist; tmux fell back to {}:{} ({})",
+                    probe_chirho.session_chirho.as_deref().unwrap_or("?"),
+                    probe_chirho.window_index_chirho.as_deref().unwrap_or("?"),
+                    probe_chirho.pane_id_chirho.as_deref().unwrap_or("?")
+                ));
+                probe_chirho.pane_id_chirho = None;
+                return probe_chirho;
+            }
+            probe_chirho.alive_chirho = true;
+            probe_chirho
         }
         Ok(output_chirho) => TmuxProbeChirho {
             alive_chirho: false,
             session_chirho: None,
             window_index_chirho: None,
             pane_id_chirho: None,
+            window_name_chirho: None,
             error_chirho: Some(
                 String::from_utf8_lossy(&output_chirho.stderr)
                     .trim()
@@ -126,6 +187,7 @@ pub(crate) fn probe_tmux_target_chirho(target_chirho: &str) -> TmuxProbeChirho {
             session_chirho: None,
             window_index_chirho: None,
             pane_id_chirho: None,
+            window_name_chirho: None,
             error_chirho: Some(err_chirho.to_string()),
         },
     }
@@ -238,23 +300,20 @@ where
 
 /// Resolves aliases to the physical-pane identity used by the target-lock
 /// branch in `spec-chirho/workflows-chirho/metropoleluya-http-broker-flow-chirho.md`.
-fn resolve_delivery_target_chirho(server_args_chirho: &[&str], target_chirho: &str) -> String {
-    let output_chirho = Command::new("tmux")
-        .args(server_args_chirho)
-        .args(["display-message", "-p", "-t", target_chirho, "#{pane_id}"])
-        .output();
-    match output_chirho {
-        Ok(output_chirho) if output_chirho.status.success() => {
-            let pane_id_chirho = String::from_utf8_lossy(&output_chirho.stdout)
-                .trim()
-                .to_string();
-            if pane_id_chirho.is_empty() {
-                target_chirho.to_string()
-            } else {
-                pane_id_chirho
-            }
-        }
-        _ => target_chirho.to_string(),
+/// Delivery always addresses the physical `%pane_id`, and only after the probe
+/// has proven that pane really is the registered window. A stale registration
+/// fails loudly here instead of silently pasting into the session's current
+/// window.
+fn resolve_delivery_target_chirho(
+    server_args_chirho: &[&str],
+    target_chirho: &str,
+) -> Result<String, String> {
+    let probe_chirho = probe_tmux_target_on_server_chirho(server_args_chirho, target_chirho);
+    match probe_chirho.pane_id_chirho {
+        Some(pane_id_chirho) if probe_chirho.alive_chirho => Ok(pane_id_chirho),
+        _ => Err(probe_chirho
+            .error_chirho
+            .unwrap_or_else(|| format!("tmux target {target_chirho} is not deliverable"))),
     }
 }
 
@@ -277,7 +336,7 @@ fn with_target_delivery_lock_chirho<WorkChirho>(
 where
     WorkChirho: FnOnce(&str) -> Result<(), String>,
 {
-    let resolved_target_chirho = resolve_delivery_target_chirho(server_args_chirho, target_chirho);
+    let resolved_target_chirho = resolve_delivery_target_chirho(server_args_chirho, target_chirho)?;
     let target_key_chirho = target_delivery_key_chirho(server_args_chirho, &resolved_target_chirho);
     let lease_chirho = acquire_target_delivery_lease_chirho(target_key_chirho);
     let target_guard_chirho = lease_chirho

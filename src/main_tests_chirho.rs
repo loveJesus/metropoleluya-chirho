@@ -199,6 +199,30 @@ impl IsolatedTmuxServerChirho {
         );
     }
 
+    fn window_index_chirho(&self, pane_chirho: &str) -> String {
+        let output_chirho = std::process::Command::new("tmux")
+            .args([
+                "-L",
+                &self.socket_name_chirho,
+                "display-message",
+                "-p",
+                "-t",
+                pane_chirho,
+                "#{window_index}",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output_chirho.status.success(),
+            "isolated tmux window lookup failed: {}",
+            String::from_utf8_lossy(&output_chirho.stderr)
+        );
+        String::from_utf8(output_chirho.stdout)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
     fn buffer_exists_chirho(&self, buffer_name_chirho: &str) -> bool {
         std::process::Command::new("tmux")
             .args([
@@ -852,4 +876,73 @@ fn register_notify_actor_reports_unnotified_for_dead_pane_chirho() {
     )
     .unwrap();
     assert_eq!(response_chirho["notified_chirho"], false);
+}
+
+/// A registration whose window index no longer exists must never deliver.
+/// `tmux display-message -t SESSION:97` answers with the session's *current*
+/// window and exits 0, so resolving a target through it used to paste a
+/// private notice into whichever pane the operator happened to be looking at:
+/// removing one agent appeared to notify the whole room. Delivery now proves
+/// the pane it resolved really is the registered window, and refuses otherwise.
+#[test]
+fn stale_window_target_refuses_delivery_instead_of_hitting_current_window_chirho() {
+    let server_chirho = IsolatedTmuxServerChirho::new_chirho();
+    let live_pane_chirho = server_chirho.first_pane_chirho.clone();
+    let live_index_chirho = server_chirho.window_index_chirho(&live_pane_chirho);
+    let stale_target_chirho = format!("{}:97", server_chirho.session_name_chirho);
+    let socket_args_chirho = ["-L", server_chirho.socket_name_chirho.as_str()];
+    let stale_payload_chirho = "stale-target-must-not-arrive-chirho";
+    let live_payload_chirho = "live-target-must-arrive-chirho";
+
+    // tmux performs the silent fallback this guard exists to catch.
+    let fallback_probe_chirho =
+        tmux_transport_chirho::probe_tmux_target_on_server_chirho(&socket_args_chirho, "invalid");
+    assert!(
+        !fallback_probe_chirho.alive_chirho,
+        "a target tmux cannot resolve must not read as alive"
+    );
+    let stale_probe_chirho = tmux_transport_chirho::probe_tmux_target_on_server_chirho(
+        &socket_args_chirho,
+        &stale_target_chirho,
+    );
+    assert!(
+        !stale_probe_chirho.alive_chirho,
+        "a missing window index must not read as alive"
+    );
+    assert!(
+        stale_probe_chirho.pane_id_chirho.is_none(),
+        "a missing window index must not surrender a pane to deliver into"
+    );
+
+    let stale_result_chirho = tmux_transport_chirho::send_tmux_message_for_test_chirho(
+        &server_chirho.socket_name_chirho,
+        &stale_target_chirho,
+        stale_payload_chirho,
+        Duration::from_millis(50),
+    );
+    assert!(
+        stale_result_chirho.is_err(),
+        "delivery to a missing window must fail loudly, not fall back"
+    );
+
+    // The registered window still delivers, so the guard costs no reachability.
+    let live_target_chirho = format!("{}:{live_index_chirho}", server_chirho.session_name_chirho);
+    tmux_transport_chirho::send_tmux_message_for_test_chirho(
+        &server_chirho.socket_name_chirho,
+        &live_target_chirho,
+        live_payload_chirho,
+        Duration::from_millis(50),
+    )
+    .expect("the registered window must still receive deliveries");
+
+    std::thread::sleep(Duration::from_millis(200));
+    let transcript_chirho = server_chirho.capture_pane_chirho(&live_pane_chirho);
+    assert!(
+        !transcript_chirho.contains(stale_payload_chirho),
+        "stale target leaked into the session's current window: {transcript_chirho}"
+    );
+    assert!(
+        transcript_chirho.contains(live_payload_chirho),
+        "registered window lost its delivery: {transcript_chirho}"
+    );
 }
